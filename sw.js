@@ -1,5 +1,5 @@
 // عامل الخدمة: يحفظ هيكل التطبيق فقط. بيانات الحضور لا تُخزَّن أبداً وتُجلب دائماً من الخادم.
-const CACHE = 'attendance-v3';
+const CACHE = 'attendance-v4';
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(SHELL); }).then(function () { return self.skipWaiting(); }));
