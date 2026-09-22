@@ -1,0 +1,18 @@
+{
+  "name": "حضور وانصراف المعلمين والموظفين",
+  "short_name": "الحضور",
+  "description": "تسجيل الحضور والانصراف وطلبات الاستئذان والغياب",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F1F5F4",
+  "theme_color": "#0C4F47",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
