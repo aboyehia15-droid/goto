@@ -103,6 +103,14 @@ textarea{resize:vertical;min-height:88px}
 .pick{display:flex;gap:12px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;background:var(--surface)}
 .pick input{width:22px;height:22px;accent-color:var(--primary);flex:none}
 .pick:has(input:checked){border-color:var(--primary);background:var(--primary-soft)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:14px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;text-align:center}
+.stat b{display:block;font-size:22px;font-weight:700}
+.stat span{font-size:12.5px;color:var(--muted)}
+.dash-row{display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:center}
+.legend{display:flex;flex-wrap:wrap;gap:8px 14px;justify-content:center;font-size:13.5px;max-width:220px}
+.legend .lg{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.legend .lg i{width:10px;height:10px;border-radius:3px;display:inline-block;flex:none}
 
 .li{display:flex;align-items:center;gap:12px;padding:12px 4px;border-bottom:1px solid var(--line)}
 .li:last-child{border-bottom:0}
@@ -121,7 +129,8 @@ textarea{resize:vertical;min-height:88px}
 .fs{border:1px solid var(--line);border-radius:12px;padding:6px 12px 2px;margin:0 0 10px}
 .fs legend{padding:0 6px;font-weight:600;font-size:14.5px}
 .punch.out{--c:var(--out);--f:var(--on-out)}
-.punch.done,.punch.off{--c:var(--surface2);--f:var(--muted);box-shadow:0 0 0 8px var(--bg),0 0 0 10px var(--line);cursor:default}
+.punch.done,.punch.off,.punch.blocked{--c:var(--surface2);--f:var(--muted);box-shadow:0 0 0 8px var(--bg),0 0 0 10px var(--line);cursor:default}
+.punch.blocked span{font-size:16px;padding:0 10px;text-align:center}
 .punch:not(.done):not(.off):active{transform:scale(.98)}
 .punch.busy::after{content:"";position:absolute;inset:-16px;border-radius:50%;border:3px solid var(--gold);animation:pulse 1.1s ease-out infinite}
 @keyframes pulse{from{transform:scale(.94);opacity:.9}to{transform:scale(1.07);opacity:0}}
@@ -287,7 +296,8 @@ const ICON={
   plus:'<path d="M5 12h14"/><path d="M12 5v14"/>',
   edit:'<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
   check:'<path d="M20 6 9 17l-5-5"/>',
-  refresh:'<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M8 16H3v5"/>'
+  refresh:'<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M8 16H3v5"/>',
+  chart:'<path d="M3 3v16a2 2 0 0 0 2 2h16"/><rect x="7" y="13" width="3" height="5" rx="1"/><rect x="12" y="9" width="3" height="9" rx="1"/><rect x="17" y="5" width="3" height="13" rx="1"/>'
 };
 const ic=n=>`<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICON[n]}</svg>`;
 
@@ -402,28 +412,60 @@ function periodsOf(tid,d){
 }
 const leaveText=lv=>'استئذان'+(lv.tf?` من ${t12(lv.tf)}${lv.tt?' إلى '+t12(lv.tt):''}`:'');
 const overlaps=(x,sh)=>{if(!sh||(!x.tf&&!x.tt))return true;const lf=x.tf||'00:00',lt=x.tt||'23:59';return lf<sh.end&&lt>sh.start};
+// فترة واحدة قد تُسجَّل أكثر من مرة (عودة بعد استئذان معتمد): القيم مفصولة بفواصل بنفس الترتيب
+function legsOf(r){
+  const il=(r&&r.i||'').split(',').map(x=>x.trim()).filter(Boolean);
+  const ol=(r&&r.o||'').split(',').map(x=>x.trim()).filter(Boolean);
+  const n=Math.max(il.length,ol.length),out=[];
+  for(let k=0;k<n;k++)out.push({in:il[k]||'',out:ol[k]||''});
+  return out;
+}
+// عدد الاستئذانات المعتمدة اليوم التي تغطي هذه الفترة؛ كل واحد يمنح فرصة عودة واحدة
+function approvedLeaveCount(tid,d,sh){
+  return excuses(tid,d).filter(x=>x.type==='leave'&&overlaps(x,sh)).length;
+}
+// حالة الفترة الآن: todo (لم تبدأ) / open (حضور بلا انصراف) / reopenable (أُغلقت ولا يزال هناك فرصة عودة من استئذان معتمد) / done
+function periodLiveState(tid,p){
+  const legs=p.rec?legsOf(p.rec):[];
+  if(!legs.length||!legs.some(l=>l.in||l.out))return 'todo';
+  const last=legs[legs.length-1];
+  if(last.in&&!last.out)return 'open';
+  const allowed=1+approvedLeaveCount(tid,today(),p.sh);
+  return legs.length<allowed?'reopenable':'done';
+}
+// من لديه أكثر من فترة: لا يُقبل تسجيل حضور (أو عودة) فترته إلا ضمن وقتها المحدد (±MULTI_EARLY/MULTI_LATE دقيقة). الانصراف غير مقيّد بهذا.
+const MULTI_EARLY=15,MULTI_LATE=30;
+function strictWindowBlocked(tid,sh){
+  if(!sh||personShifts(tid).length<=1)return null;
+  const now=mins(nowHM()),lo=mins(sh.start)-MULTI_EARLY,hi=mins(sh.end)+MULTI_LATE;
+  return (now<lo||now>hi)?true:null;
+}
 function periodStatus(p,d,ex,T,h,abs){
-  const r=p.rec,sh=p.sh,notes=[];
-  const lv=ex.find(x=>x.type==='leave'&&overlaps(x,sh));
-  if(r&&(r.i||r.o)){
+  const legs=p.rec?legsOf(p.rec):[],notes=[];
+  const lv=ex.find(x=>x.type==='leave'&&overlaps(x,p.sh));
+  const has=legs.some(l=>l.in||l.out);
+  if(has){
+    const sh=p.sh,first=legs[0],last=legs[legs.length-1],open=!!(last.in&&!last.out);
     let late=0,early=0;
     if(sh&&!lv){
-      if(r.i){const m=mins(r.i)-mins(sh.start);if(m>sh.grace)late=m}
-      if(r.o){const m=mins(sh.end)-mins(r.o);if(m>sh.grace)early=m}
+      if(first.in){const m=mins(first.in)-mins(sh.start);if(m>sh.grace)late=m}
+      if(!open&&last.out){const m=mins(sh.end)-mins(last.out);if(m>sh.grace)early=m}
     }
-    if(lv)notes.push(leaveText(lv));
+    if(legs.length>1){
+      for(let k=0;k<legs.length-1;k++){if(legs[k].out&&legs[k+1].in)notes.push(`عاد ${t12(legs[k+1].in)} بعد استئذان (خرج ${t12(legs[k].out)})`)}
+    } else if(lv)notes.push(leaveText(lv));
     if(late)notes.push('تأخر '+fmtDur(late));
     if(early)notes.push('خروج مبكر '+fmtDur(early));
-    if(r.i&&!r.o&&d<T)notes.push('لم يسجّل الانصراف');
-    if(r.a)notes.push('تعديل من الإدارة'+(r.n?': '+r.n:''));
-    return {k:'present',in:r.i||'',out:r.o||'',late,early,adjusted:!!r.a,leave:!!lv,label:'حاضر',note:notes.join('، ')};
+    if(open&&d<T)notes.push('لم يسجّل الانصراف');
+    if(p.rec.a)notes.push('تعديل من الإدارة'+(p.rec.n?': '+p.rec.n:''));
+    return {k:'present',in:first.in||'',out:last.out||'',legs,late,early,adjusted:!!p.rec.a,leave:!!lv,label:'حاضر',note:notes.join('، ')};
   }
   if(h)return {k:'holiday',label:'إجازة رسمية',note:h.name||''};
   if(abs)return {k:'absent_ok',label:'غياب بعذر',note:''};
   if(lv)return {k:'leave',label:'استئذان',note:leaveText(lv)};
   if(d>T)return {k:'future',label:'',note:''};
   if(d===T)return {k:'pending',label:'لم يسجّل بعد',note:''};
-  return {k:'none',label:'لم يسجّل',note:r&&r.a?'تعديل من الإدارة':''};
+  return {k:'none',label:'لم يسجّل',note:p.rec&&p.rec.a?'تعديل من الإدارة':''};
 }
 function dayStatus(tid,d){
   const T=today(),h=S.holidays[d],ex=excuses(tid,d),abs=ex.find(x=>x.type==='absence');
@@ -445,12 +487,13 @@ function dayStatus(tid,d){
     leave:periods.some(p=>p.st.leave),adjusted:periods.some(p=>p.st.adjusted)};
 }
 function summarize(tid,days){
-  const s={present:0,leave:0,absent:0,none:0,holiday:0,late:0,early:0,missP:0};
+  const s={present:0,leave:0,absent:0,none:0,holiday:0,late:0,early:0,missP:0,lateMin:0,earlyMin:0};
   days.forEach(d=>{const st=dayStatus(tid,d);
     if(st.k==='present'){s.present++;st.periods.forEach(p=>{if(p.st.k==='none')s.missP++})}
     else if(st.k==='absent_ok')s.absent++;else if(st.k==='none')s.none++;else if(st.k==='holiday')s.holiday++;
     if(st.k==='leave'||st.leave)s.leave++;
-    s.late+=st.late;s.early+=st.early;});
+    s.late+=st.late;s.early+=st.early;
+    st.periods.forEach(p=>{s.lateMin+=(p.st.late||0);s.earlyMin+=(p.st.early||0)});});
   return s;
 }
 
@@ -605,7 +648,7 @@ async function doActivate(){
 const pendingRequests=()=>S.requests.filter(r=>r.status==='pending'&&S.teachers[r.tid]);
 function tabsFor(){
   if(!Sess)return [];
-  if(isAdmin())return [['today','اليوم','cal'],['requests','الطلبات','clip',pendingRequests().length],['reports','الكشوف','file'],['teachers','الأفراد','users'],['settings','الإعدادات','sliders']];
+  if(isAdmin())return [['today','اليوم','cal'],['dash','المؤشرات','chart'],['requests','الطلبات','clip',pendingRequests().length],['reports','الكشوف','file'],['teachers','الأفراد','users'],['settings','الإعدادات','sliders']];
   return [['punch','البصمة','finger'],['myreq','طلباتي','clip'],['mysheet','كشفي','file']];
 }
 function acctBarHtml(){
@@ -633,7 +676,7 @@ function render(){
   if(!Sess){v.innerHTML=loginScreen();return}
   if(S.ver<0){v.innerHTML=U.err?`<div class="banner bad">${esc(U.err)}</div><button class="btn" data-act="retryState">إعادة المحاولة</button>`:'<div class="loading">جارٍ التحميل…</div>';return}
   let html='';
-  if(isAdmin())html=({today:todayScreen,requests:requestsScreen,reports:()=>reportScreen(null),teachers:teachersScreen,settings:settingsScreen})[U.tab]();
+  if(isAdmin())html=({today:todayScreen,dash:dashScreen,requests:requestsScreen,reports:()=>reportScreen(null),teachers:teachersScreen,settings:settingsScreen})[U.tab]();
   else html=({punch:punchScreen,myreq:myReqScreen,mysheet:()=>reportScreen(Sess.tid)})[U.tab]();
   v.innerHTML=html;
   fitPapers();tickClock();
@@ -641,15 +684,22 @@ function render(){
 
 /* ---------- شاشة المعلم: البصمة ---------- */
 function suggestPeriod(tid){
-  const T=today(),ps=periodsOf(tid,T);
-  const open=ps.find(p=>p.rec&&p.rec.i&&!p.rec.o);
+  const T=today(),ps=periodsOf(tid,T).map(p=>({...p,live:periodLiveState(tid,p)}));
+  const open=ps.find(p=>p.live==='open');
   if(open)return {kind:'out',p:open};
-  const todo=ps.filter(p=>!(p.rec&&(p.rec.i||p.rec.o)));
+  const todo=ps.filter(p=>p.live==='todo'||p.live==='reopenable');
   if(!todo.length)return {kind:'done'};
+  const avail=todo.filter(p=>!strictWindowBlocked(tid,p.sh));
+  const pool=avail.length?avail:todo;
   const now=mins(nowHM());
   const dist=p=>{if(!p.sh)return 0;const a=mins(p.sh.start),b=mins(p.sh.end);return now<a?a-now:now>b?now-b:0};
-  todo.sort((x,y)=>dist(x)-dist(y)||(x.sh?mins(x.sh.start):0)-(y.sh?mins(y.sh.start):0));
-  return {kind:'in',p:todo[0]};
+  pool.sort((x,y)=>dist(x)-dist(y)||(x.sh?mins(x.sh.start):0)-(y.sh?mins(y.sh.start):0));
+  return {kind:'in',p:pool[0],blocked:!avail.length&&todo.length>0};
+}
+function kindForSid(tid,sid){
+  const p=periodsOf(tid,today()).find(x=>x.sid===sid);
+  if(!p)return 'in';
+  return periodLiveState(tid,p)==='open'?'out':'in';
 }
 function kindForSid(tid,sid){
   const p=periodsOf(tid,today()).find(x=>x.sid===sid);
@@ -687,36 +737,98 @@ function monthSummaryLine(tid){
   const T=today(),days=workdays(T.slice(0,8)+'01',T),s=summarize(tid,days);
   return `ملخص هذا الشهر حتى اليوم: حضور ${s.present} • استئذان ${s.leave} • غياب بعذر ${s.absent} • لم يسجّل ${s.none}${s.holiday?` • إجازات ${s.holiday}`:''}`;
 }
+
+/* ---------- رسومات بيانية بسيطة (SVG) بلا أي مكتبات خارجية ---------- */
+function svgDonut(segs,size=132,thick=16){
+  const total=segs.reduce((a,s)=>a+s.value,0);
+  const r=(size-thick)/2,cx=size/2,cy=size/2,C=2*Math.PI*r;
+  if(!total)return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}"><circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--line)" stroke-width="${thick}"/></svg>`;
+  let off=0;
+  const arcs=segs.filter(s=>s.value>0).map(s=>{
+    const frac=s.value/total,len=frac*C,rot=off/total*360-90;off+=s.value;
+    return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${s.color}" stroke-width="${thick}" stroke-dasharray="${len} ${(C-len).toFixed(2)}" transform="rotate(${rot.toFixed(2)} ${cx} ${cy})"/>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" role="img" aria-label="رسم دائري">
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--line)" stroke-width="${thick}"/>${arcs}
+    <text x="${cx}" y="${cy-3}" text-anchor="middle" font-size="22" font-weight="700" fill="var(--text)">${total}</text>
+    <text x="${cx}" y="${cy+17}" text-anchor="middle" font-size="11" fill="var(--muted)">المجموع</text></svg>`;
+}
+const chartLegend=segs=>`<div class="legend">${segs.filter(s=>s.value>0).map(s=>`<span class="lg"><i style="background:${s.color}"></i>${esc(s.label)} <b>${s.value}</b></span>`).join('')||'<span class="muted small">لا بيانات بعد</span>'}</div>`;
+function svgBars(items,{width=520,height=150,color='var(--primary)'}={}){
+  const max=Math.max(1,...items.map(i=>i.value)),n=items.length,gap=10,bw=n?(width-gap*(n+1))/n:0;
+  const bars=items.map((it,i)=>{
+    const h=Math.round((it.value/max)*(height-30)),x=gap+i*(bw+gap),y=height-24-h;
+    return `<rect x="${x.toFixed(1)}" y="${y}" width="${bw.toFixed(1)}" height="${h}" rx="3" fill="${color}"/>
+      <text x="${(x+bw/2).toFixed(1)}" y="${height-8}" text-anchor="middle" font-size="10" fill="var(--muted)">${esc(it.label)}</text>
+      <text x="${(x+bw/2).toFixed(1)}" y="${y-4}" text-anchor="middle" font-size="10.5" fill="var(--text)">${it.value}</text>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" role="img" aria-label="رسم بياني">${bars}</svg>`;
+}
+function svgHBars(items,{width=520,barH=22,gap=10,color='var(--bad)'}={}){
+  const max=Math.max(1,...items.map(i=>i.value)),height=items.length*(barH+gap)+gap,labelW=Math.min(150,width*0.34);
+  const bars=items.map((it,i)=>{
+    const y=gap+i*(barH+gap),w=Math.max(2,Math.round((it.value/max)*(width-labelW-46)));
+    return `<text x="${width-labelW-8}" y="${(y+barH*0.7).toFixed(1)}" text-anchor="end" font-size="11.5" fill="var(--text)">${esc(it.label)}</text>
+      <rect x="${width-labelW}" y="${y}" width="${w}" height="${barH}" rx="4" fill="${color}"/>
+      <text x="${width-labelW+w+6}" y="${(y+barH*0.7).toFixed(1)}" font-size="11" fill="var(--muted)">${it.value}</text>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" role="img" aria-label="ترتيب">${bars}</svg>`;
+}
+function teacherDashCard(tid){
+  const T=today(),days=workdays(T.slice(0,8)+'01',T),s=summarize(tid,days);
+  const segs=[
+    {label:'حضور',value:s.present,color:'var(--ok)'},
+    {label:'استئذان',value:s.leave,color:'var(--warn)'},
+    {label:'غياب بعذر',value:s.absent,color:'var(--warn)'},
+    {label:'لم يسجّل',value:s.none,color:'var(--bad)'},
+    {label:'إجازات',value:s.holiday,color:'var(--line)'}
+  ];
+  return `<div class="card" style="margin-top:16px;max-width:420px;width:100%"><h3 style="margin:0 0 6px;text-align:center">ملخص هذا الشهر</h3>
+    <div class="dash-row">${svgDonut(segs)}${chartLegend(segs)}</div>
+    ${(s.lateMin||s.earlyMin)?`<p class="small muted" style="text-align:center;margin:8px 0 0">إجمالي التأخر ${fmtDur(s.lateMin)}${s.earlyMin?` • الخروج المبكر ${fmtDur(s.earlyMin)}`:''}</p>`:''}</div>`;
+}
 function punchScreen(){
   const T=today(),tid=Sess.tid,hol=S.holidays[T],work=isWork(T);
-  const sg=suggestPeriod(tid),ps=periodsOf(tid,T),multi=personShifts(tid).length>1;
-  const state=(!work||hol)?'off':sg.kind;
+  const sg=suggestPeriod(tid),ps=periodsOf(tid,T).map(p=>({...p,live:periodLiveState(tid,p)})),multi=personShifts(tid).length>1;
+  const state=(!work||hol)?'off':sg.kind==='in'&&sg.blocked?'blocked':sg.kind;
   const d=parse(T),ex=excuses(tid,T);
-  const lbl={in:'تسجيل الحضور',out:'تسجيل الانصراف',done:'تم اليوم',off:'إجازة'}[state];
+  const bigLbl=sg.p&&sg.p.live==='reopenable'?'تسجيل العودة':'تسجيل الحضور';
+  const lbl={in:bigLbl,out:'تسجيل الانصراف',done:'تم اليوم',off:'إجازة',blocked:'لا توجد فترة متاحة الآن'}[state];
   const subName=multi&&sg.p&&sg.p.sh&&(state==='in'||state==='out')?sg.p.sh.name:'';
   const bioOn=!!Store.get('att_bio_'+tid);
-  const first=ps[0],r0=(first&&first.rec)||{};
+  const first=ps[0],legs0=first&&first.rec?legsOf(first.rec):[];
+  const inTxt=legs0[0]?legs0[0].in:'',outTxt=legs0.length?legs0[legs0.length-1].out:'';
   const shifts=personShifts(tid);
   return `<div class="stage">
     <div class="dow">${DAYS[d.getDay()]}</div>
     <div class="dt">${HLONG.format(d)}<br>${GLONG.format(d)}م</div>
-    ${shifts.length===1?`<div class="chip pri">فترتك: ${esc(shiftText(shifts[0]))}</div>`:''}
+    ${shifts.length===1?`<div class="chip pri">فترتك: ${esc(shiftText(shifts[0]))}</div>`:multi?`<div class="chip pri">لديك ${shifts.length} فترات اليوم</div>`:''}
     ${!work?'<div class="chip">اليوم خارج أيام الدوام (الأحد إلى الخميس)</div>':hol?`<div class="chip warn">إجازة رسمية${hol.name?': '+esc(hol.name):''}</div>`:''}
     <div class="clock" id="clock" aria-hidden="true"></div>
-    <button class="punch ${state}${U.busy?' busy':''}" data-act="punch" data-sid="${esc(sg.p?sg.p.sid:'')}" ${state==='done'||state==='off'?'disabled':''} aria-label="${lbl}${subName?': '+esc(subName):''}">${state==='done'?ic('check'):ic('finger')}<span>${lbl}</span>${subName?`<span class="sub">${esc(subName)}</span>`:''}</button>
-    ${multi?`<div class="card plist"><h3>فترات اليوم</h3>${ps.map(p=>{const r=p.rec||{},done=r.i&&r.o,open=r.i&&!r.o;
-      return `<div class="li"><div class="sp"><div class="nm">${esc(p.sh?p.sh.name:'')}</div><div class="tm">${p.sh?t12(p.sh.start)+' – '+t12(p.sh.end)+'<br>':''}حضور ${r.i?t12(r.i):'—'} &nbsp; انصراف ${r.o?t12(r.o):'—'}</div></div>${done?'<span class="chip ok">تم</span>':state==='off'?'':`<button class="btn sm" data-act="punchp" data-sid="${esc(p.sid)}">${open?'تسجيل الانصراف':'تسجيل الحضور'}</button>`}</div>`}).join('')}</div>`
-    :`<div class="today2"><div><small>الحضور</small><b>${r0.i?t12(r0.i):'—'}</b></div><div><small>الانصراف</small><b>${r0.o?t12(r0.o):'—'}</b></div></div>`}
+    <button class="punch ${state}${U.busy?' busy':''}" data-act="punch" data-sid="${esc(sg.p?sg.p.sid:'')}" ${state==='done'||state==='off'||state==='blocked'?'disabled':''} aria-label="${lbl}${subName?': '+esc(subName):''}">${state==='done'?ic('check'):ic('finger')}<span>${lbl}</span>${subName?`<span class="sub">${esc(subName)}</span>`:''}</button>
+    ${multi?`<div class="card plist"><h3>فترات اليوم</h3>${ps.map(p=>{
+      const legs=p.rec?legsOf(p.rec):[];
+      const legsTxt=legs.length?legs.map(l=>`${l.in?t12(l.in):'—'} ← ${l.out?t12(l.out):'—'}`).join('، '):'لم يسجّل بعد';
+      const blocked=(p.live==='todo'||p.live==='reopenable')&&strictWindowBlocked(tid,p.sh);
+      const btnTxt=p.live==='open'?'تسجيل الانصراف':p.live==='reopenable'?'تسجيل العودة':'تسجيل الحضور';
+      let action='';
+      if(p.live==='done')action='<span class="chip ok">تم</span>';
+      else if(!work||hol)action='';
+      else if(blocked)action=`<span class="chip" title="متاحة فقط بين ${t12(p.sh.start)} و${t12(p.sh.end)}">غير متاحة الآن</span>`;
+      else action=`<button class="btn sm" data-act="punchp" data-sid="${esc(p.sid)}">${btnTxt}</button>`;
+      return `<div class="li"><div class="sp"><div class="nm">${esc(p.sh?p.sh.name:'')}</div><div class="tm">${p.sh?t12(p.sh.start)+' – '+t12(p.sh.end)+'<br>':''}${legsTxt}</div></div>${action}</div>`;
+    }).join('')}</div>`
+    :`<div class="today2"><div><small>الحضور</small><b>${inTxt?t12(inTxt):'—'}</b></div><div><small>الانصراف</small><b>${outTxt?t12(outTxt):'—'}</b></div></div>`}
     ${ex.length?`<div class="banner" style="margin-top:14px;max-width:420px;width:100%">لديك ${ex.some(x=>x.type==='absence')?'غياب':'استئذان'} معتمد اليوم.</div>`:''}
     <div class="row" style="margin-top:18px"><button class="btn" data-act="newreq">طلب استئذان أو غياب</button></div>
-    <div class="card small muted" style="margin-top:16px;max-width:420px;width:100%;text-align:center">${monthSummaryLine(tid)}</div>
+    ${teacherDashCard(tid)}
   </div>
   <div class="card" style="margin-top:26px"><h3>حسابي</h3><div class="row">
     <button class="btn sm" data-act="pinmodal">تغيير الرمز</button>
     ${Bio.supported()?`<button class="btn sm" data-act="${bioOn?'bioOff':'bioOn'}">${bioOn?'إيقاف قفل البصمة':'تفعيل قفل البصمة'}</button>`:''}
     <button class="btn sm" data-act="logout">تسجيل الخروج</button></div>
     ${installCard()}
-    <p class="muted small" style="margin:10px 0 0">وقت الحضور والانصراف يُسجَّل من ساعة الخادم وليس من ساعة جوالك.${Bio.supported()?' قفل البصمة اختياري ويعمل على هذا الجوال فقط.':''}</p></div>`;
+    <p class="muted small" style="margin:10px 0 0">وقت الحضور والانصراف يُسجَّل من ساعة الخادم وليس من ساعة جوالك.${Bio.supported()?' قفل البصمة اختياري ويعمل على هذا الجوال فقط.':''}${multi?' فترة العمل مقفلة: لا يُقبل تسجيل الحضور إلا ضمن وقتها المحدد.':''}</p></div>`;
 }
 function tickClock(){const c=$('#clock');if(c)c.textContent=t12(nowHM())}
 setInterval(tickClock,15000);
@@ -726,8 +838,13 @@ async function doPunch(sid){
   const T=today();
   if(!isWork(T)||S.holidays[T]){toast('اليوم ليس يوم دوام','bad');return}
   const sh=sid&&S.shifts[sid]?{id:sid,...S.shifts[sid]}:null;
-  if(sh&&offShiftWarn(sh)){
-    const ok=await confirmOffShift(sh,kindForSid(Sess.tid,sid));
+  const kind=kindForSid(Sess.tid,sid);
+  if(sh&&kind==='in'&&strictWindowBlocked(Sess.tid,sh)){
+    toast(`فترة "${sh.name}" من ${t12(sh.start)} إلى ${t12(sh.end)}. لا يمكن تسجيل الحضور فيها الآن.`,'bad');
+    return;
+  }
+  if(sh&&personShifts(Sess.tid).length<=1&&offShiftWarn(sh)){
+    const ok=await confirmOffShift(sh,kind);
     if(!ok)return;
   }
   await guard(async()=>{
@@ -801,6 +918,37 @@ async function sendReq(){
 function chipFor(st){
   const m={present:'ok',absent_ok:'warn',leave:'warn',none:'bad'}[st.k]||'';
   return st.label&&st.k!=='pending'?`<span class="chip ${m}">${st.k==='present'&&st.leave?'حاضر + استئذان':st.label}</span>`:'';
+}
+function dashScreen(){
+  const T=today(),list=teachersSorted().filter(t=>t.active!==false);
+  const work=isWork(T)&&!S.holidays[T];
+  const rows=list.map(t=>({t,st:dayStatus(t.id,T)}));
+  const c=k=>rows.filter(r=>r.st.k===k).length;
+  const rate=list.length?Math.round(100*c('present')/list.length):0;
+  const segsToday=[
+    {label:'حاضرون',value:c('present'),color:'var(--ok)'},
+    {label:'لم يسجّلوا بعد',value:c('pending'),color:'var(--muted)'},
+    {label:'استئذان',value:c('leave'),color:'var(--warn)'},
+    {label:'غياب بعذر',value:c('absent_ok'),color:'var(--warn)'},
+    {label:'إجازة',value:c('holiday'),color:'var(--line)'}
+  ];
+  let d=T,days7=[];
+  while(days7.length<7){if(isWork(d))days7.unshift(d);d=addDays(d,-1)}
+  const trend=days7.map(dd=>({label:dd.slice(8)+'/'+dd.slice(5,7),value:list.filter(t=>dayStatus(t.id,dd).k==='present').length}));
+  const monDays=workdays(T.slice(0,8)+'01',T);
+  const lateAgg=list.map(t=>{let m=0;monDays.forEach(dd=>dayStatus(t.id,dd).periods.forEach(p=>m+=(p.st.late||0)+(p.st.early||0)));return {label:t.name,value:m}})
+    .filter(x=>x.value>0).sort((a,b)=>b.value-a.value).slice(0,5);
+  const nT=list.filter(t=>t.kind!=='staff').length,nS=list.length-nT;
+  return `<h2>لوحة المؤشرات</h2>
+  <div class="stats">
+    <div class="stat"><b>${list.length}</b><span>إجمالي الأفراد</span></div>
+    <div class="stat"><b>${nT}</b><span>معلمون</span></div>
+    <div class="stat"><b>${nS}</b><span>موظفون</span></div>
+    <div class="stat"><b>${work?rate+'%':'—'}</b><span>نسبة الحضور اليوم</span></div>
+  </div>
+  <div class="card"><h3>حالة اليوم</h3>${work?`<div class="dash-row">${svgDonut(segsToday)}${chartLegend(segsToday)}</div>`:`<p class="muted small" style="margin:0">${isWork(T)?'اليوم إجازة رسمية':'اليوم خارج أيام الدوام'}.</p>`}</div>
+  <div class="card"><h3>الحضور خلال آخر 7 أيام عمل</h3>${list.length?svgBars(trend):'<p class="muted small" style="margin:0">لا يوجد أفراد بعد.</p>'}</div>
+  ${lateAgg.length?`<div class="card"><h3>الأكثر تأخراً وخروجاً مبكراً هذا الشهر (دقائق)</h3>${svgHBars(lateAgg)}</div>`:''}`;
 }
 function adminQuickIn(tid){
   const T=today(),ps=periodsOf(tid,T);
