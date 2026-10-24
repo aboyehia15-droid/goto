@@ -10,12 +10,31 @@ const CORE_TTL = 600;            // مدة الاحتفاظ بالنسخة قب�
 const CORE_CHUNK = 90000;        // حجم الجزء في الذاكرة المؤقتة
 const CORE_SHEET = 'نسخة الخادم'; // ورقة مخفية تحفظ آخر نسخة سليمة
 
+// ---------- شغّل هذه الدالة من المحرر (هي الأولى في القائمة) ----------
+// تطلب كل الصلاحيات اللازمة، وتجلب الخادم، وتجهّز الأوراق ومؤقت التذكيرات. البيانات القديمة لا تُمسّ.
+function setup() {
+  authorize_();
+  const r = core_().setup();
+  return r + ' | نسخة الخادم: ' + coreInfo_();
+}
+// ذكر كل الخدمات هنا صراحةً حتى يطلب جوجل صلاحياتها عند أول تشغيل (الخادم يُحمَّل من GitHub فلا يراها المحرر)
+function authorize_() {
+  UrlFetchApp.fetch(CORE_BASE + 'Loader.gs', { muteHttpExceptions: true });
+  ScriptApp.getProjectTriggers();
+  SpreadsheetApp.getActiveSpreadsheet();
+  PropertiesService.getScriptProperties();
+  CacheService.getScriptCache();
+  LockService.getScriptLock();
+  HtmlService.createHtmlOutput('');
+  ContentService.createTextOutput('');
+  Utilities.getUuid();
+}
+
 // ---------- الدوال التي يستدعيها جوجل ----------
 function doGet(e) { return core_().doGet(e); }
 function doPost(e) { return core_().doPost(e); }
 function api(req) { return core_().api(req); }
 function pushTick() { return core_().pushTick(); }
-function setup() { const r = core_().setup(); return r + ' | نسخة الخادم: ' + coreInfo_(); }
 function installReminders() { return core_().installReminders(); }
 function resetAdminPin() { return core_().resetAdminPin(); }
 // تشغيلها يدوياً لجلب آخر تحديث فوراً بدل انتظار 10 دقائق
