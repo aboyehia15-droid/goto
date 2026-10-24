@@ -19,6 +19,8 @@ function setup() {
 }
 // ذكر كل الخدمات هنا صراحةً حتى يطلب جوجل صلاحياتها عند أول تشغيل (الخادم يُحمَّل من GitHub فلا يراها المحرر)
 function authorize_() {
+  // يُظهر نافذة الموافقة إن كانت أي صلاحية غير ممنوحة (جوجل يسمح الآن بإلغاء تحديد بعضها)
+  try { ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL); } catch (e) { if (!/is not a function|undefined/.test(String(e))) throw e; }
   UrlFetchApp.fetch(CORE_BASE + 'Loader.gs', { muteHttpExceptions: true });
   ScriptApp.getProjectTriggers();
   SpreadsheetApp.getActiveSpreadsheet();
@@ -41,7 +43,7 @@ function resetAdminPin() { return core_().resetAdminPin(); }
 function updateNow() { CacheService.getScriptCache().removeAll(['core_v_Code.js', 'core_v_Index.html']); CORE_MEM = null; HTML_MEM = null; core_(); LOADER_HTML_(); return 'تم التحديث: ' + coreInfo_(); }
 
 // ---------- التحميل ----------
-let CORE_MEM = null, HTML_MEM = null;
+let CORE_MEM = null, HTML_MEM = null, NEED_AUTH = false;
 function core_() {
   if (CORE_MEM) return CORE_MEM;
   const src = getFile_('Code.js', function (s) { return s.indexOf('/*CORE-END*/') > 0 && compile_(s) !== null; });
@@ -76,10 +78,11 @@ function getFile_(name, valid) {
       const s = r.getContentText('UTF-8');
       if (valid(s)) src = s; else console.error('نسخة غير سليمة من GitHub: ' + name);
     }
-  } catch (e) { console.warn('github: ' + e); }
+  } catch (e) { console.warn('github: ' + e); if (/external_request|إذن|permission/i.test(String(e))) NEED_AUTH = true; }
   const saved = savedGet_(name);
   if (src) { if (saved !== src) savedPut_(name, src); }
   else src = saved;
+  if (!src && NEED_AUTH) throw new Error('صلاحية «الاتصال بخدمة خارجية» غير ممنوحة. اختر الدالة setup من القائمة أعلى المحرر ثم اضغط «تنفيذ»، وفي نافذة الموافقة اضغط «تحديد الكل» ثم «متابعة».');
   if (!src) throw new Error('تعذّر جلب نسخة الخادم من GitHub ولا توجد نسخة محفوظة. تأكد أن المستودع عام وأن مجلد server موجود.');
   const parts = [];
   for (let i = 0; i < src.length; i += CORE_CHUNK) parts.push(src.slice(i, i + CORE_CHUNK));
