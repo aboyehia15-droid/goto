@@ -4,18 +4,19 @@
 <base target="_top">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>حضور وانصراف المعلمين والموظفين</title>
+<title>بصمة مجمع ابن تيمية</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0C4F47">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="الحضور">
+<meta name="apple-mobile-web-app-title" content="بصمة مجمع ابن تيمية">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="48x48" href="favicon-48.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Amiri:wght@700&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Amiri:wght@700&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
 :root{
   --bg:#F1F5F4; --surface:#FFFFFF; --surface2:#F6F9F8; --text:#16302C; --muted:#586C68; --line:#D3DFDC;
@@ -94,6 +95,8 @@ textarea{resize:vertical;min-height:88px}
 .seg button[aria-pressed="true"]{background:var(--primary);color:var(--on-primary)}
 .seg button+button{border-inline-start:1px solid var(--line)}
 .chip{display:inline-flex;align-items:center;padding:2px 10px;border-radius:999px;font-size:13.5px;font-weight:500;background:var(--surface2);color:var(--muted);white-space:nowrap}
+.pushcard{border:1px solid var(--primary);background:var(--primary-soft);border-radius:12px;padding:12px 14px}
+.pushcard b{display:inline-flex;align-items:center;gap:6px}
 .chip.ok{background:var(--ok-soft);color:var(--ok)}
 .chip.warn{background:var(--warn-soft);color:var(--warn)}
 .chip.bad{background:var(--bad-soft);color:var(--bad)}
@@ -105,6 +108,16 @@ textarea{resize:vertical;min-height:88px}
 .pick:has(input:checked){border-color:var(--primary);background:var(--primary-soft)}
 .subnav{display:flex;gap:6px;overflow-x:auto;margin:0 0 12px;padding-bottom:4px}
 .subnav .btn{white-space:nowrap}
+.appbar::after{content:'';position:absolute;inset-inline:0;bottom:-1px;height:2px;background:linear-gradient(90deg,transparent,var(--gold),transparent);background-size:40% 100%;background-repeat:no-repeat;opacity:0;transition:opacity .2s}
+body.syncing .appbar::after{opacity:1;animation:sync 1.1s linear infinite}
+@keyframes sync{from{background-position:-40% 0}to{background-position:140% 0}}
+@media (prefers-reduced-motion:reduce){body.syncing .appbar::after{animation:none}}
+.manualbtn{border-color:var(--gold);background:var(--gold-soft);color:var(--text)}
+.manualbtn svg.i{width:16px;height:16px}
+.audit td{font-size:13.5px;vertical-align:top;text-align:right}
+.audit{width:100%;border-collapse:collapse}
+.audit th,.audit td{border-bottom:1px solid var(--line);padding:7px 6px}
+.audit th{text-align:right;color:var(--muted);font-weight:500;font-size:13px}
 .pickbox{max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:8px}
 .card h3 svg.i{width:18px;height:18px;vertical-align:-3px}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:14px}
@@ -224,7 +237,7 @@ table.mx.dense .c em,table.mx.dense .c1{font-size:5.2pt}
 <body>
 <header class="appbar no-print"><div class="in">
   <div class="lg"><img id="logoTA" alt="شعار جمعية تعلم"></div>
-  <div class="ttl"><b>حضور وانصراف المعلمين والموظفين</b><span id="who">&nbsp;</span></div>
+  <div class="ttl"><b>بصمة مجمع ابن تيمية</b><span id="who">&nbsp;</span></div>
   <div class="lg"><img id="logoIB" alt="شعار مجمع ابن تيمية القرآني"></div>
 </div></header>
 <div class="acctbar no-print" id="acctbar" hidden></div>
@@ -234,7 +247,25 @@ table.mx.dense .c em,table.mx.dense .c1{font-size:5.2pt}
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script src="config.js"></script>
-<script>if('serviceWorker' in navigator){addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){})})}</script>
+<script>
+// تحديث تلقائي: يفحص وجود نسخة جديدة عند كل فتح وكل 30 دقيقة، ويطبّقها فوراً دون حذف التطبيق أو إعادة تثبيته
+if('serviceWorker' in navigator){
+  var hadCtrl=!!navigator.serviceWorker.controller,reloading=false;
+  navigator.serviceWorker.addEventListener('controllerchange',function(){
+    if(!hadCtrl||reloading)return;
+    var go=function(){if(reloading)return;reloading=true;location.reload()};
+    var m=document.getElementById('modal');
+    if(document.hidden||!m||!m.firstChild)go();else document.addEventListener('visibilitychange',function(){if(document.hidden)go()});
+  });
+  addEventListener('load',function(){
+    navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(function(r){
+      var up=function(){r.update().catch(function(){})};
+      setInterval(up,30*60000);
+      document.addEventListener('visibilitychange',function(){if(!document.hidden)up()});
+    }).catch(function(){});
+  });
+}
+</script>
 <script>
 'use strict';
 const LOGO_TA='logo-ta.png', LOGO_IB='logo-ib.jpg';
@@ -302,6 +333,7 @@ const ICON={
   check:'<path d="M20 6 9 17l-5-5"/>',
   refresh:'<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M8 16H3v5"/>',
   mail:'<rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>',
+  bell:'<path d="M10.27 21a2 2 0 0 0 3.46 0"/><path d="M3.26 15.33A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.67C19.41 13.96 18 12.5 18 8A6 6 0 0 0 6 8c0 4.5-1.41 5.96-2.74 7.33"/>',
   shield:'<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
   chart:'<path d="M3 3v16a2 2 0 0 0 2 2h16"/><rect x="7" y="13" width="3" height="5" rx="1"/><rect x="12" y="9" width="3" height="9" rx="1"/><rect x="17" y="5" width="3" height="13" rx="1"/>'
 };
@@ -370,19 +402,45 @@ function call(action,payload){
 }
 
 /* ---------- الحالة ---------- */
-const S={today:'',ver:-1,holidays:{},shifts:{},att:{},requests:[],teachers:{},me:null,sheetUrl:'',settings:{},extra:[],duty:[],messages:[]};
+const S={today:'',ver:-1,holidays:{},shifts:{},att:{},requests:[],teachers:{},me:null,sheetUrl:'',settings:{},extra:[],duty:[],messages:[],admin:null,users:[],permNames:{}};
 const U={tab:null,busy:false,rep:null,list:null,lmode:'teacher',lsel:'',err:''};
 
 function setState(st){
   S.ver=st.ver;S.att=st.att||{};S.requests=st.requests||[];S.sheetUrl=st.sheetUrl||'';
   S.holidays={};Object.entries(st.holidays||{}).forEach(([d,n])=>S.holidays[d]={name:n});
-  S.shifts=st.shifts||{};S.settings=st.settings||{};S.extra=st.extra||[];S.duty=st.duty||[];S.messages=st.messages||[];
+  S.shifts=st.shifts||{};S.settings=st.settings||{};S.extra=st.extra||[];S.duty=st.duty||[];S.messages=st.messages||[];S.admin=st.admin||null;S.users=st.users||[];S.permNames=st.permNames||{};
   if(st.role==='teacher'){S.me=st.me;S.teachers={[st.me.id]:{name:st.me.name,role:st.me.role,active:true,order:0,activated:true,kind:st.me.kind||'teacher',shiftIds:st.me.shiftIds||[]}}}
   else{S.me=null;S.teachers=st.teachers||{}}
   scheduleRender();
 }
-async function loadState(){const r=await call('state');setState(r.state)}
+const cacheKey=()=>Sess?'att_cache_'+Sess.role+'_'+(Sess.uid||Sess.tid||''):'';
+async function loadState(){
+  const r=await call('state');setState(r.state);
+  try{const k=cacheKey();if(k){const j=JSON.stringify(r.state);if(j.length<1500000)Store.set(k,j)}}catch(e){}
+  U.syncing=false;scheduleRender();
+  if(Push.synced!==ActiveRole+(Sess&&Sess.token||'').slice(-8)){Push.synced=ActiveRole+(Sess&&Sess.token||'').slice(-8);Push.active=false;pushSync()}
+}
+// يعرض آخر بيانات محفوظة على الجهاز فوراً (فتح سريع) ثم يحدّثها من الخادم
+function loadCached(){
+  try{const k=cacheKey(),j=k&&Store.get(k);if(j){setState(JSON.parse(j));U.syncing=true;return true}}catch(e){}
+  return false;
+}
 const isAdmin=()=>!!Sess&&Sess.role==='admin';
+const isOwner=()=>isAdmin()&&(!S.admin||S.admin.owner);
+const can=perm=>isAdmin()&&(!S.admin||S.admin.owner||(S.admin.perms||[]).includes(perm));
+// كل زر إجراء في الإدارة والصلاحية التي يحتاجها: يُخفى الزر عمّن لا يملك الصلاحية (والخادم يرفض أيضاً)
+const ACT_PERM={qin:'att',editday:'att',saveday:'att',delday:'att',delrange:'att',
+  approve:'req',rejectm:'req',dorej:'req',undo:'req',delreq:'req',
+  addt:'people',editt:'people',toggleact:'people',resetpin:'people',delt:'people',
+  addshift:'shifts',editshift:'shifts',delshift:'shifts',assignshift:'shifts',bulkflag:'shifts',addhol:'shifts',delhol:'shifts',
+  savedutyset:'duty',dutycell:'duty',dutydated:'duty',dutydel:'duty',saveextraset:'duty',saveextra:'duty',extradel:'duty',
+  savemsgset:'msgs',sendmsg:'msgs',msgdel:'msgs',
+  savebehavior:'settings',savepush:'settings',savelocation:'settings',saveremind:'settings',resolvemap:'settings',
+  newuser:'owner',edituser:'owner',deluser:'owner',saveowner:'owner'};
+function applyPerms(root){
+  if(!isAdmin()||isOwner())return;
+  $$('[data-act]',root).forEach(el=>{const pm=ACT_PERM[el.dataset.act];if(pm&&!(pm==='owner'?isOwner():can(pm)))el.remove()});
+}
 const teachersSorted=()=>Object.entries(S.teachers).map(([id,t])=>({id,...t})).sort((a,b)=>(a.order||0)-(b.order||0)||String(a.name).localeCompare(String(b.name),'ar'));
 
 const mins=hm=>{const [h,m]=hm.split(':').map(Number);return h*60+m};
@@ -417,6 +475,7 @@ function dutyOn(tid,d){
     .map(x=>({...x,sh:S.shifts[x.sid]})).filter(x=>x.sh).sort((a,b)=>mins(dutyTime(a))-mins(dutyTime(b)));
 }
 const fillDuty=(t,x)=>String(t||'').replace(/\{الفترة\}/g,x.sh.name).replace(/\{الوقت\}/g,t12(dutyTime(x)));
+const manualOK=sh=>(S.settings.manualAll!==false)||!!(sh&&sh.manual);
 const myMsgs=()=>S.settings.messagesEnabled===false?[]:S.messages.filter(m=>m.tid===Sess.tid);
 const unreadCount=()=>myMsgs().filter(m=>!m.read).length;
 function excuses(tid,d){
@@ -488,7 +547,7 @@ function periodStatus(p,d,ex,T,h,abs){
     if(late)notes.push('تأخر '+fmtDur(late));
     if(early)notes.push('خروج مبكر '+fmtDur(early));
     if(open&&d<T)notes.push('لم يسجّل الانصراف');
-    if(p.rec.a)notes.push('تعديل من الإدارة'+(p.rec.n?': '+p.rec.n:''));
+    if(p.rec.a)notes.push('تعديل من الإدارة'+(p.rec.by?` (${byAtTxt(p.rec.by,p.rec.at)})`:'')+(p.rec.n?': '+p.rec.n:''));
     return {k:'present',in:first.in||'',out:last.out||'',legs,late,early,adjusted:!!p.rec.a,leave:!!lv,label:'حاضر',note:notes.join('، ')};
   }
   if(h)return {k:'holiday',label:'إجازة رسمية',note:h.name||''};
@@ -571,6 +630,7 @@ function bioErr(e){
 let toastT;
 function toast(msg,kind=''){const t=$('#toast');t.innerHTML=`<div class="${kind}">${esc(msg)}</div>`;clearTimeout(toastT);toastT=setTimeout(()=>t.innerHTML='',3600)}
 function openModal(title,body,foot){
+  setTimeout(()=>applyPerms($('#modal')),0);
   $('#modal').innerHTML=`<div class="ov" data-ov="1"><div class="dlg" role="dialog" aria-modal="true" aria-label="${esc(title)}"><h3>${esc(title)}</h3>${body}<div class="dfoot">${foot}</div></div></div>`;
   const f=$('#modal input:not([type=radio]),#modal textarea,#modal select');if(f&&matchMedia('(pointer:fine)').matches)f.focus();
 }
@@ -632,7 +692,9 @@ async function act(action,payload,okMsg,afterOk){
 /* ---------- تسجيل الدخول ---------- */
 async function loadList(){
   U.err='';
-  try{const r=await call('list');U.list=r.list}catch(e){U.err=e.message}
+  if(!U.list){try{const c=JSON.parse(Store.get('att_list')||'null');if(c){U.list=c.list;U.admins=c.admins;scheduleRender()}}catch(e){}}
+  try{const r=await call('list');U.list=r.list;U.admins=r.admins||[];try{Store.set('att_list',JSON.stringify({list:r.list,admins:U.admins}))}catch(e){}}
+  catch(e){if(!U.list)U.err=e.message}
   scheduleRender();
 }
 function loginScreen(){
@@ -641,7 +703,11 @@ function loginScreen(){
   const admin=U.lmode==='admin';
   let body;
   const pinField=(id,label,ac)=>`<div class="field"><label for="${id}">${label}</label><input class="pin" type="password" inputmode="numeric" autocomplete="${ac}" id="${id}" maxlength="8" data-enter="dologin"></div>`;
-  if(admin)body=pinField('lp','رمز الإدارة','current-password')+`<button class="btn primary" data-act="dologin">دخول</button>`;
+  if(admin){
+    const ad=U.admins||[];
+    body=(ad.length>1?`<div class="field"><label for="lu">المستخدم</label><select id="lu" data-bind="lusr">${ad.map(x=>`<option value="${esc(x.id)}" ${x.id===(U.lusr||'admin')?'selected':''}>${esc(x.name)}</option>`).join('')}</select></div>`:'')
+      +pinField('lp','رمز الدخول','current-password')+`<button class="btn primary" data-act="dologin">دخول</button>`;
+  }
   else{
     const sel=U.list.find(x=>x.id===U.lsel);
     body=`<div class="field"><label for="ln">الاسم</label><select id="ln" data-bind="lsel"><option value="">اختر اسمك…</option>${U.list.map(x=>`<option value="${esc(x.id)}" ${x.id===U.lsel?'selected':''}>${esc(x.name)}${x.kind==='staff'?' (موظف)':''}${x.activated?'':' (لم يفعّل بعد)'}</option>`).join('')}</select></div>`;
@@ -654,7 +720,7 @@ function loginScreen(){
     ${installCard()}<div class="seg" role="group" aria-label="نوع الحساب" style="margin:10px 0 14px"><button data-act="lmode" data-v="teacher" aria-pressed="${!admin}" ${U.addMode?'disabled':''}>معلم / موظف</button><button data-act="lmode" data-v="admin" aria-pressed="${admin}" ${U.addMode?'disabled':''}>الإدارة</button></div>${body}</div>`;
 }
 async function afterLogin(r){
-  Slots[r.role]={token:r.token,role:r.role,tid:r.tid||'',name:r.name};saveSlot(r.role);
+  Slots[r.role]={token:r.token,role:r.role,tid:r.tid||'',uid:r.uid||'',name:r.name};saveSlot(r.role);
   setActive(r.role);U.tab=null;U.rep=null;U.addMode=false;window.__sumShown=false;
   await loadState();
   if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();
@@ -669,7 +735,7 @@ async function doLogin(){
   if(!/^\d{4,8}$/.test(pin)){toast('اكتب الرمز (4 إلى 8 أرقام)','bad');return}
   if(U.lmode==='teacher'&&!U.lsel){toast('اختر اسمك أولاً','bad');return}
   await guard(async()=>{
-    const r=U.lmode==='admin'?await call('adminLogin',{pin}):await call('login',{tid:U.lsel,pin});
+    const r=U.lmode==='admin'?await call('adminLogin',{pin,uid:U.lusr||'admin'}):await call('login',{tid:U.lsel,pin});
     await afterLogin(r);
   });
 }
@@ -690,7 +756,7 @@ function tabsFor(){
 function acctBarHtml(){
   if(U.addMode)return '';
   const chips=[];
-  if(Slots.admin)chips.push(['admin','الإدارة',ActiveRole==='admin']);
+  if(Slots.admin)chips.push(['admin','الإدارة'+(Slots.admin.name&&Slots.admin.name!=='الإدارة'?': '+Slots.admin.name:''),ActiveRole==='admin']);
   if(Slots.teacher)chips.push(['teacher',Slots.teacher.name||'حسابي',ActiveRole==='teacher']);
   if(!chips.length)return '';
   let html=chips.map(([r,l,act])=>`<button class="btn sm${act?' primary':''}" data-act="switchacct" data-r="${r}">${act?ic('check'):''}${esc(l)}</button>`).join('');
@@ -702,7 +768,8 @@ function renderChrome(){
   const tabs=U.addMode?[]:tabsFor();if(tabs.length&&!tabs.some(t=>t[0]===U.tab))U.tab=tabs[0][0];
   $('.navwrap').hidden=!tabs.length;
   $('#nav').innerHTML=tabs.map(([k,l,i,b])=>`<button data-act="tab" data-k="${k}" ${U.tab===k?'aria-current="page"':''}>${ic(i)}<span>${l}</span>${b?`<span class="bd" aria-label="${b} طلبات معلقة">${b}</span>`:''}</button>`).join('');
-  $('#who').textContent=U.addMode?'إضافة حساب':!Sess?'تسجيل الدخول':isAdmin()?'لوحة الإدارة':Sess.name;
+  document.body.classList.toggle('syncing',!!U.syncing);
+  $('#who').textContent=U.addMode?'إضافة حساب':!Sess?'تسجيل الدخول':isAdmin()?'لوحة الإدارة'+(S.admin&&S.admin.name?' — '+S.admin.name:''):Sess.name;
   const ab=$('#acctbar'),abHtml=acctBarHtml();ab.hidden=!abHtml;ab.innerHTML=abHtml;
 }
 function render(){
@@ -715,6 +782,7 @@ function render(){
   if(isAdmin())html=({today:todayScreen,dash:dashScreen,requests:requestsScreen,reports:()=>reportScreen(null),teachers:teachersScreen,settings:settingsScreen})[U.tab]();
   else html=({punch:punchScreen,inbox:inboxScreen,myreq:myReqScreen,mysheet:()=>reportScreen(Sess.tid)})[U.tab]();
   v.innerHTML=html;
+  applyPerms(v);
   fitPapers();tickClock();
 }
 
@@ -774,11 +842,87 @@ function monthSummaryLine(tid){
   return `ملخص هذا الشهر حتى اليوم: حضور ${s.present} • استئذان ${s.leave} • غياب بعذر ${s.absent} • غياب ${s.none}${s.holiday?` • إجازات ${s.holiday}`:''}`;
 }
 
+
+/* ---------- تنبيهات الجوال: تصل حتى لو كان الجوال مقفلاً أو التطبيق مغلقاً (Web Push) ---------- */
+const Push={active:false,busy:false,checked:false};
+const pushSupported=()=>PWA&&('serviceWorker' in navigator)&&('PushManager' in window)&&('Notification' in window);
+const b64uToU8=s=>{s=String(s).replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';const b=atob(s),o=new Uint8Array(b.length);for(let i=0;i<b.length;i++)o[i]=b.charCodeAt(i);return o};
+const u8ToB64u=buf=>{const a=new Uint8Array(buf);let s='';for(let i=0;i<a.length;i++)s+=String.fromCharCode(a[i]);return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')};
+async function pushReg(){
+  let r=await navigator.serviceWorker.getRegistration();
+  if(!r)r=await navigator.serviceWorker.register('sw.js',{updateViaCache:'none'});
+  return navigator.serviceWorker.ready;
+}
+// تسجيل اشتراك هذا الجهاز للحساب النشط (فرد أو إدارة)
+async function pushSubscribe(interactive){
+  if(!pushSupported()||!Sess)return false;
+  if(Notification.permission==='denied'){if(interactive)toast('الإشعارات محظورة لهذا التطبيق. فعّلها من إعدادات الجوال ثم أعد المحاولة.','bad');return false}
+  if(Notification.permission!=='granted'){
+    if(!interactive)return false;
+    const pr=await Notification.requestPermission();
+    if(pr!=='granted'){toast('لم تُمنح صلاحية الإشعارات','bad');return false}
+  }
+  const key=(await call('pushKey')).key;
+  const reg=await pushReg();
+  let sub=await reg.pushManager.getSubscription();
+  if(sub){const k=sub.options&&sub.options.applicationServerKey;if(k&&u8ToB64u(k)!==key){try{await sub.unsubscribe()}catch(e){}sub=null}}
+  if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64uToU8(key)});
+  const j=sub.toJSON();
+  await call('pushSub',{endpoint:j.endpoint,p256dh:j.keys.p256dh,auth:j.keys.auth,ua:(isIOS()?'iPhone ':'')+navigator.userAgent.slice(0,100)});
+  Store.set('att_push_'+Sess.role+'_'+(Sess.tid||Sess.uid||''),j.endpoint+'|'+today());
+  Push.active=true;
+  return true;
+}
+// مزامنة صامتة عند كل فتح: تحافظ على ربط الجهاز بالحساب وتجدّد الاشتراك يومياً
+async function pushSync(){
+  if(!pushSupported()||!Sess||Notification.permission!=='granted')return;
+  try{
+    const reg=await navigator.serviceWorker.getRegistration();
+    const sub=reg&&await reg.pushManager.getSubscription();
+    const k='att_push_'+Sess.role+'_'+(Sess.tid||Sess.uid||'');
+    if(sub&&Store.get(k)===sub.endpoint+'|'+today()){Push.active=true}
+    else await pushSubscribe(false);
+  }catch(e){}
+  Push.checked=true;scheduleRender();
+}
+async function pushLeave(){
+  // عند تسجيل الخروج: إيقاف تنبيهات هذا الحساب على هذا الجهاز
+  try{
+    if(!pushSupported()||!Sess)return;
+    const reg=await navigator.serviceWorker.getRegistration();const sub=reg&&await reg.pushManager.getSubscription();
+    if(sub)await call('pushUnsub',{endpoint:sub.endpoint});
+    Store.del('att_push_'+Sess.role+'_'+(Sess.tid||Sess.uid||''));
+  }catch(e){}
+  Push.active=false;
+}
+if(PWA&&('serviceWorker' in navigator))navigator.serviceWorker.addEventListener('message',ev=>{
+  const m=ev.data||{};
+  if(m.type==='push'){beepAlert();toast(m.body||m.title||'');if(Sess)loadState().catch(()=>{})}
+  else if(m.type==='refresh'&&Sess)loadState().catch(()=>{});
+});
+async function pushTest(){
+  const reg=await navigator.serviceWorker.getRegistration();const sub=reg&&await reg.pushManager.getSubscription();
+  if(!sub)throw new Error('فعّل التنبيهات أولاً');
+  await call('pushTest',{endpoint:sub.endpoint});
+}
+// بطاقة تفعيل التنبيهات (للفرد وللإدارة)
+function pushCard(forAdmin){
+  const st=S.settings||{};
+  if(st.pushEnabled===false)return '';
+  const what=forAdmin?'إشعار فوري بالطلبات الجديدة (استئذان أو غياب)':'تذكير الحضور قبل بداية فترتك، وتذكير الانصراف، والمناوبة، ورسائل الإدارة';
+  if(!PWA)return `<div class="banner" style="margin-top:12px">لتصلك التنبيهات والجوال مقفل: افتح التطبيق من رابط الجوال (GitHub) وثبّته على الشاشة الرئيسية، ثم فعّل التنبيهات من داخله.</div>`;
+  if(isIOS()&&!isStandalone())return `<div class="banner" style="margin-top:12px"><b>تنبيهات الآيفون:</b> أضف التطبيق أولاً إلى الشاشة الرئيسية (زر المشاركة ← «إضافة إلى الشاشة الرئيسية»)، ثم افتحه من أيقونته وفعّل التنبيهات. يتطلب iOS 16.4 أو أحدث.</div>`;
+  if(!pushSupported())return `<p class="muted small" style="margin:10px 0 0">هذا المتصفح لا يدعم التنبيهات في الخلفية. استخدم Chrome على أندرويد أو Safari على آيفون بعد تثبيت التطبيق.</p>`;
+  if(Notification.permission==='denied')return `<div class="banner" style="margin-top:12px">الإشعارات محظورة لهذا التطبيق على جوالك. افتح إعدادات الجوال ← التطبيقات/الإشعارات ← «بصمة مجمع ابن تيمية» وفعّل الإشعارات، ثم اضغط «تفعيل التنبيهات» هنا.</div>`;
+  if(Push.active)return `<div class="row" style="margin-top:12px;align-items:center"><span class="chip ok">${ic('bell')} التنبيهات مفعّلة على هذا الجهاز</span><button class="btn sm" data-act="pushtest">إرسال تنبيه تجريبي</button></div>`;
+  return `<div class="pushcard" style="margin-top:12px"><b>${ic('bell')} فعّل تنبيهات الجوال</b><p class="muted small" style="margin:4px 0 8px">تصلك ${what} بالصوت والنص حتى لو كان الجوال مقفلاً أو التطبيق مغلقاً.</p><button class="btn primary" data-act="pushon">تفعيل التنبيهات على هذا الجهاز</button></div>`;
+}
+
 /* ---------- تذكير صوتي بالحضور والانصراف (يعمل أثناء فتح التطبيق) ---------- */
 const remKey=(sid,kind)=>`att_rem_${Sess&&Sess.tid}_${today()}_${sid||'x'}_${kind}`;
 function notify(title,body){
   try{
-    if(window.Notification&&Notification.permission==='granted')new Notification(title,{body,tag:title,silent:false});
+    if(!Push.active&&window.Notification&&Notification.permission==='granted')new Notification(title,{body,tag:title,silent:false});
   }catch(e){}
   beepAlert();
   toast(body);
@@ -898,12 +1042,12 @@ function punchScreen(){
       let action='';
       if(p.live==='done')action='<span class="chip ok">تم</span>';
       else if(!work||hol)action='';
-      else if(blocked)action=`<span class="chip" title="متاحة فقط بين ${t12(p.sh.start)} و${t12(p.sh.end)}">غير متاحة الآن</span>`;
-      else action=`<div class="row" style="gap:6px;justify-content:flex-end"><button class="btn sm" data-act="punchp" data-sid="${esc(p.sid)}">${btnTxt}</button>${p.sh&&p.sh.manual?`<button class="btn sm" data-act="manualopen" data-sid="${esc(p.sid)}">وقت يدوي</button>`:''}</div>`;
+      else if(blocked)action=`<div class="row" style="gap:6px;justify-content:flex-end"><span class="chip" title="متاحة فقط بين ${t12(p.sh.start)} و${t12(p.sh.end)}">غير متاحة الآن</span>${manualOK(p.sh)?`<button class="btn sm manualbtn" data-act="manualopen" data-sid="${esc(p.sid)}">${ic('edit')}وقت يدوي</button>`:''}</div>`;
+      else action=`<div class="row" style="gap:6px;justify-content:flex-end"><button class="btn sm" data-act="punchp" data-sid="${esc(p.sid)}">${btnTxt}</button>${manualOK(p.sh)?`<button class="btn sm manualbtn" data-act="manualopen" data-sid="${esc(p.sid)}">${ic('edit')}وقت يدوي</button>`:''}</div>`;
       return `<div class="li"><div class="sp"><div class="nm">${esc(p.sh?p.sh.name:'')}</div><div class="tm">${p.sh?t12(p.sh.start)+' – '+t12(p.sh.end)+'<br>':''}${legsTxt}</div></div>${action}</div>`;
     }).join('')}</div>`
     :`<div class="today2"><div><small>الحضور</small><b>${inTxt?t12(inTxt):'—'}</b></div><div><small>الانصراف</small><b>${outTxt?t12(outTxt):'—'}</b></div></div>
-    ${state!=='off'&&state!=='done'&&shifts.length===1&&shifts[0].manual?`<button class="btn sm" style="margin-top:10px" data-act="manualopen" data-sid="${esc(shifts[0].id)}">تسجيل بوقت يدوي</button>`:''}`}
+    ${state!=='off'&&state!=='done'&&shifts.length<=1&&manualOK(shifts[0])?`<button class="btn manualbtn" style="margin-top:12px" data-act="manualopen" data-sid="${esc(shifts[0]?shifts[0].id:'')}">${ic('edit')}تسجيل بوقت يدوي (نسيت التوقيع)</button>`:''}`}
     ${ex.length?`<div class="banner" style="margin-top:14px;max-width:420px;width:100%">لديك ${ex.some(x=>x.type==='absence')?'غياب':'استئذان'} معتمد اليوم.</div>`:''}
     <div class="row" style="margin-top:18px"><button class="btn" data-act="newreq">طلب استئذان أو غياب</button></div>
     ${teacherDashCard(tid)}
@@ -911,10 +1055,11 @@ function punchScreen(){
   <div class="card" style="margin-top:26px"><h3>حسابي</h3><div class="row">
     <button class="btn sm" data-act="pinmodal">تغيير الرمز</button>
     ${Bio.supported()?`<button class="btn sm" data-act="${bioOn?'bioOff':'bioOn'}">${bioOn?'إيقاف قفل البصمة':'تفعيل قفل البصمة'}</button>`:''}
-    ${('Notification' in window)&&Notification.permission!=='granted'?`<button class="btn sm" data-act="reqnotif">تفعيل تذكير الحضور والانصراف</button>`:''}
+    ${!PWA&&('Notification' in window)&&Notification.permission!=='granted'?`<button class="btn sm" data-act="reqnotif">تفعيل تذكير الحضور والانصراف</button>`:''}
     <button class="btn sm" data-act="logout">تسجيل الخروج</button></div>
+    ${pushCard(false)}
     ${installCard()}
-    <p class="muted small" style="margin:10px 0 0">وقت الحضور والانصراف يُسجَّل من ساعة الخادم وليس من ساعة جوالك.${Bio.supported()?' قفل البصمة اختياري ويعمل على هذا الجوال فقط.':''}${multi?' فترة العمل مقفلة: لا يُقبل تسجيل الحضور إلا ضمن وقتها المحدد.':''} تذكير الحضور والانصراف يعمل ما دام التطبيق مفتوحاً على جوالك.</p></div>`;
+    <p class="muted small" style="margin:10px 0 0">وقت الحضور والانصراف يُسجَّل من ساعة الخادم وليس من ساعة جوالك.${Bio.supported()?' قفل البصمة اختياري ويعمل على هذا الجوال فقط.':''}${multi?' فترة العمل مقفلة: لا يُقبل تسجيل الحضور إلا ضمن وقتها المحدد.':''}${Push.active?' التذكيرات تصلك على هذا الجهاز حتى لو كان مقفلاً.':' فعّل تنبيهات الجوال لتصلك التذكيرات والجهاز مقفل.'}</p></div>`;
 }
 function tickClock(){const c=$('#clock');if(c)c.textContent=t12(nowHM())}
 setInterval(tickClock,15000);
@@ -969,10 +1114,12 @@ async function doPunch(sid,manualTime){
   });
 }
 function manualTimeModal(sid){
-  const sh=S.shifts[sid];if(!sh)return;
-  const now=nowHM(),val=now>=sh.start&&now<=sh.end?now:sh.start;
-  openModal('تسجيل وقت يدوي',`<p class="muted small" style="margin-top:0">فترة «${esc(sh.name)}» من ${t12(sh.start)} إلى ${t12(sh.end)}. اختر الوقت الفعلي الذي حضرت أو انصرفت فيه؛ يجب أن يكون ضمن حدود الفترة.</p>
-    <div class="field"><label for="mt-t">الوقت</label><input type="time" id="mt-t" min="${sh.start}" max="${sh.end}" value="${val}"></div>`,
+  const sh=sid?S.shifts[sid]:null,now=nowHM();
+  if(sid&&!sh)return;
+  const kind=kindForSid(Sess.tid,sid)==='out'?'الانصراف':'الحضور';
+  const hi=sh?(now<sh.end?now:sh.end):now,val=sh?(now>=sh.start&&now<=sh.end?now:(now<sh.start?sh.start:sh.end)):now;
+  openModal('تسجيل '+kind+' بوقت يدوي',`<p class="muted small" style="margin-top:0">${sh?`فترة «${esc(sh.name)}» من ${t12(sh.start)} إلى ${t12(sh.end)}. `:''}اختر الوقت الفعلي الذي ${kind==='الحضور'?'حضرت':'انصرفت'} فيه. ${sh?'يجب أن يكون ضمن حدود الفترة و':'يجب أن '}لا يتجاوز الوقت الحالي، ويظهر للإدارة أنه تسجيل يدوي.</p>
+    <div class="field"><label for="mt-t">وقت ${kind}</label><input type="time" id="mt-t" ${sh?`min="${sh.start}"`:''} max="${hi}" value="${val>hi?hi:val}"></div>`,
     `<button class="btn primary" data-act="submitmanual" data-sid="${esc(sid)}">تسجيل</button><button class="btn" data-act="close">إلغاء</button>`);
 }
 async function bioOn(){
@@ -994,7 +1141,7 @@ const reqDesc=r=>{
   if(r.type==='absence'){const same=!r.to||r.to===r.from;return same?`غياب ${DAYS[dow(r.from)]} ${ltr(greg(r.from))}`:`غياب من ${ltr(greg(r.from))} إلى ${ltr(greg(r.to))}`}
   return `استئذان ${DAYS[dow(r.from)]} ${ltr(greg(r.from))}${r.tf?` من ${t12(r.tf)}`:''}${r.tt?` إلى ${t12(r.tt)}`:''}`;
 };
-const statusChip=r=>r.status==='pending'?'<span class="chip warn">بانتظار الموافقة</span>':r.status==='approved'?'<span class="chip ok">تمت الموافقة</span>':'<span class="chip bad">مرفوض</span>';
+const statusChip=r=>(r.status==='pending'?'<span class="chip warn">بانتظار الموافقة</span>':r.status==='approved'?'<span class="chip ok">تمت الموافقة</span>':'<span class="chip bad">مرفوض</span>')+(r.status!=='pending'&&(r.decBy||r.decAt)?`<div class="muted small" style="margin-top:2px">${esc(byAtTxt(r.decBy,r.decAt))}</div>`:'');
 const byAt=(a,b)=>String(b.at).localeCompare(String(a.at));
 function myReqScreen(){
   const mine=[...S.requests].sort(byAt);
@@ -1065,6 +1212,7 @@ function dashScreen(){
   ${lateAgg.length?`<div class="card"><h3>الأكثر تأخراً وخروجاً مبكراً هذا الشهر (دقائق)</h3>${svgHBars(lateAgg)}</div>`:''}`;
 }
 /* ---------- صفحة المعلم: الرسائل والمناوبات والتكليفات ---------- */
+const byAtTxt=(by,at)=>[by,at?fmtAt(at):''].filter(Boolean).join('، ');
 const AT_FMT=new Intl.DateTimeFormat('ar-SA-u-ca-gregory-nu-latn',{timeZone:TZ,day:'numeric',month:'long',hour:'numeric',minute:'2-digit'});
 const fmtAt=iso=>{try{return AT_FMT.format(new Date(iso))}catch(e){return ''}};
 const isDateStr=v=>/^\d{4}-\d{2}-\d{2}$/.test(String(v||''));
@@ -1078,7 +1226,7 @@ function teacherTopNotes(tid,T){
 function inboxScreen(){
   const tid=Sess.tid,T=today(),st=S.settings||{};
   const msgs=myMsgs();
-  const secMsg=st.messagesEnabled===false?'':`<div class="card"><h3>رسائل الإدارة</h3>${msgs.length?msgs.map(m=>`<div class="li" style="align-items:flex-start;${m.read?'':'background:var(--gold-soft);border-radius:10px;padding-inline:10px'}"><div class="sp"><div style="white-space:pre-wrap">${esc(m.text)}</div><div class="muted small">${fmtAt(m.at)}</div></div>${m.read?'<span class="chip ok">تم الاطلاع</span>':`<button class="btn sm primary" data-act="msgread" data-id="${esc(m.id)}">تم الاطلاع</button>`}</div>`).join(''):'<p class="muted small" style="margin:0">لا توجد رسائل.</p>'}</div>`;
+  const secMsg=st.messagesEnabled===false?'':`<div class="card"><h3>رسائل الإدارة</h3>${msgs.length?msgs.map(m=>`<div class="li" style="align-items:flex-start;${m.read?'':'background:var(--gold-soft);border-radius:10px;padding-inline:10px'}"><div class="sp"><div style="white-space:pre-wrap">${esc(m.text)}</div><div class="muted small">${m.by?'من '+esc(m.by)+' • ':''}${fmtAt(m.at)}</div></div>${m.read?'<span class="chip ok">تم الاطلاع</span>':`<button class="btn sm primary" data-act="msgread" data-id="${esc(m.id)}">تم الاطلاع</button>`}</div>`).join(''):'<p class="muted small" style="margin:0">لا توجد رسائل.</p>'}</div>`;
   let secDuty='';
   if(st.dutyEnabled!==false){
     const mine=S.duty.filter(x=>x.tid===tid&&S.shifts[x.sid]).map(x=>({...x,sh:S.shifts[x.sid]}));
@@ -1319,7 +1467,43 @@ function msgSettingsHtml(){
     <div class="lbl">المستلمون</div>${peoplePicker('msr',[])}
     <button class="btn primary" style="margin-top:8px" data-act="sendmsg">إرسال</button>
     <p class="muted small" style="margin:8px 0 0">تُرسل نسخة مستقلة لكل مستلم، فيمكنك إرسال رسالة مختلفة لكل شخص بتكرار الإرسال.</p></div>
-    <div class="card"><h3>الرسائل المرسلة</h3>${sent.length?sent.map(m=>`<div class="li" style="align-items:flex-start"><div class="sp"><div class="nm">${esc(tName(m.tid))}</div><div style="white-space:pre-wrap">${esc(m.text)}</div><div class="muted small">أُرسلت ${fmtAt(m.at)}${m.from&&m.from>T?` • تظهر من ${ltr(greg(m.from))}`:''}</div></div><div style="display:grid;gap:6px;justify-items:end">${m.read?`<span class="chip ok" title="${esc(fmtAt(m.readAt))}">تم الاطلاع</span>`:'<span class="chip warn">لم يُطّلع عليها</span>'}<button class="btn sm danger" data-act="msgdel" data-id="${esc(m.id)}">حذف</button></div></div>`).join(''):'<p class="muted small" style="margin:0">لم تُرسل رسائل بعد.</p>'}</div>`;
+    <div class="card"><h3>الرسائل المرسلة</h3>${sent.length?sent.map(m=>`<div class="li" style="align-items:flex-start"><div class="sp"><div class="nm">${esc(tName(m.tid))}</div><div style="white-space:pre-wrap">${esc(m.text)}</div><div class="muted small">${m.by?'من '+esc(m.by)+' • ':''}أُرسلت ${fmtAt(m.at)}${m.from&&m.from>T?` • تظهر من ${ltr(greg(m.from))}`:''}</div></div><div style="display:grid;gap:6px;justify-items:end">${m.read?`<span class="chip ok" title="${esc(fmtAt(m.readAt))}">تم الاطلاع</span>`:'<span class="chip warn">لم يُطّلع عليها</span>'}<button class="btn sm danger" data-act="msgdel" data-id="${esc(m.id)}">حذف</button></div></div>`).join(''):'<p class="muted small" style="margin:0">لم تُرسل رسائل بعد.</p>'}</div>`;
+}
+/* ---------- الإعدادات: المستخدمون والصلاحيات ---------- */
+const permLabel=k=>(S.permNames[k]||k);
+function usersHtml(){
+  const me=S.admin||{};
+  const mine=`<div class="card"><h3>حسابك</h3><div class="li"><div class="sp"><div class="nm">${esc(me.name||'')}</div><div class="tm">${me.owner?'المدير العام — كل الصلاحيات':((me.perms||[]).length?(me.perms||[]).map(k=>esc(permLabel(k).split(':')[0])).join('، '):'اطلاع فقط (عرض الحضور والكشوف والمؤشرات دون تعديل)')}</div></div><button class="btn sm" data-act="pinmodal">تغيير رمزي</button></div></div>`;
+  if(!isOwner())return mine+`<p class="muted small">إدارة المستخدمين والصلاحيات من صلاحية المدير العام فقط.</p>`;
+  const us=S.users||[];
+  return mine+`<div class="card"><h3>اسم المدير العام</h3><div class="row" style="align-items:flex-end"><div class="field sp" style="margin:0;min-width:200px"><label for="ow-n">يظهر في سجل التعديلات وشاشة الدخول</label><input type="text" id="ow-n" maxlength="60" value="${esc(S.settings.ownerName||'المدير العام')}"></div><button class="btn primary" data-act="saveowner">حفظ</button></div></div>
+  <div class="card"><div class="row"><h3 style="margin:0">مستخدمو الإدارة</h3><span class="sp"></span><button class="btn sm primary" data-act="newuser">${ic('plus')}إضافة مستخدم</button></div>
+    <p class="muted small" style="margin:6px 0 8px">كل مستخدم يدخل باسمه ورمزه من «الإدارة» في شاشة الدخول. يستطيع الجميع الاطلاع على الحضور والكشوف والمؤشرات وسجل التعديلات، أما التعديل فحسب الصلاحيات التي تمنحها له. وكل تعديل يُسجَّل باسم من قام به ووقته.</p>
+    ${us.length?us.map(u=>`<div class="li" style="align-items:flex-start;flex-wrap:wrap"><div class="sp" style="min-width:200px"><div class="nm">${esc(u.name)} ${u.active?'':'<span class="chip">موقوف</span>'}</div><div class="tm">${u.perms.length?u.perms.map(k=>esc(permLabel(k).split(':')[0])).join('، '):'اطلاع فقط'}</div><div class="muted small">أُضيف ${fmtAt(u.at)}${u.by?' بواسطة '+esc(u.by):''}</div></div><div class="row" style="gap:6px"><button class="btn sm" data-act="edituser" data-id="${esc(u.id)}">تعديل</button><button class="btn sm danger" data-act="deluser" data-id="${esc(u.id)}">حذف</button></div></div>`).join(''):'<div class="empty">لا يوجد مستخدمون غيرك بعد. أضف وكيلاً أو مشرفاً وحدد صلاحياته.</div>'}</div>`;
+}
+function userModal(id){
+  const u=id?(S.users||[]).find(x=>x.id===id):null;
+  const keys=Object.keys(S.permNames||{});
+  openModal(u?'تعديل مستخدم':'مستخدم جديد',`<div class="field"><label for="us-n">الاسم</label><input type="text" id="us-n" maxlength="60" value="${esc(u?u.name:'')}" placeholder="مثال: وكيل الشؤون التعليمية"></div>
+    <div class="field"><label for="us-p">${u?'رمز دخول جديد (اتركه فارغاً لإبقاء الحالي)':'رمز الدخول (4 إلى 8 أرقام)'}</label><input class="pin" type="password" inputmode="numeric" maxlength="8" id="us-p" autocomplete="new-password"></div>
+    <div class="lbl">الصلاحيات</div>
+    ${keys.map(k=>`<label class="pick"><input type="checkbox" name="usp" value="${k}" ${u&&u.perms.includes(k)?'checked':''}><span>${esc(permLabel(k))}</span></label>`).join('')}
+    <p class="muted small" style="margin:4px 0 8px">بدون أي صلاحية يكون المستخدم «اطلاع فقط».</p>
+    ${u?`<label class="switch"><input type="checkbox" id="us-a" ${u.active?'checked':''}><span><b>الحساب فعّال</b><br><span class="muted small">عند الإيقاف يُسجَّل خروجه فوراً ولا يستطيع الدخول.</span></span></label>`:''}`,
+    `<button class="btn primary" data-act="saveuser" data-id="${esc(id||'')}">حفظ</button><button class="btn" data-act="close">إلغاء</button>`);
+}
+
+/* ---------- الإعدادات: سجل التعديلات ---------- */
+function auditHtml(){
+  if(!U.audit&&!U.auditLoading){U.auditLoading=true;call('audit',{limit:1500}).then(r=>{U.audit=r.audit||[]}).catch(e=>{U.audit=[];toast(e.message,'bad')}).finally(()=>{U.auditLoading=false;scheduleRender()})}
+  const list=U.audit||[];
+  const who=[...new Set(list.map(x=>x.by).filter(Boolean))];
+  const fq=(U.aq||'').trim(),fu=U.au||'';
+  const rows=list.filter(x=>(!fu||x.by===fu)&&(!fq||(x.action+' '+x.details+' '+x.by).includes(fq)));
+  return `<div class="card"><div class="row"><h3 style="margin:0">سجل التعديلات</h3><span class="sp"></span><button class="btn sm" data-act="auditreload">${ic('refresh')}تحديث</button><button class="btn sm" data-act="auditcsv">${ic('down')}تصدير Excel</button></div>
+    <p class="muted small" style="margin:6px 0 10px">كل تعديل في البرنامج: من قام به، ومتى، وماذا عدّل. يشمل تعديلات الإدارة وطلبات المعلمين والتسجيل اليدوي ودخول الإدارة. يُحفظ أيضاً في ورقة «سجل التعديلات» في جدول جوجل.</p>
+    <div class="pair"><div class="field" style="margin:0"><label for="au-u">المستخدم</label><select id="au-u" data-bind="au"><option value="">الكل</option>${who.map(w=>`<option ${w===fu?'selected':''}>${esc(w)}</option>`).join('')}</select></div><div class="field" style="margin:0"><label for="au-q">بحث</label><input type="text" id="au-q" data-bind="aq" value="${esc(fq)}" placeholder="اسم، إجراء، تاريخ…"></div></div></div>
+    <div class="card" style="padding:6px 10px;overflow-x:auto">${U.auditLoading&&!U.audit?'<div class="loading">جارٍ التحميل…</div>':rows.length?`<table class="audit"><thead><tr><th style="width:24%">الوقت</th><th style="width:18%">المستخدم</th><th style="width:20%">الإجراء</th><th>التفاصيل</th></tr></thead><tbody>${rows.slice(0,600).map(x=>`<tr><td>${esc(fmtAt(x.at))}</td><td><b>${esc(x.by)}</b></td><td>${esc(x.action)}</td><td>${esc(x.details)}</td></tr>`).join('')}</tbody></table>${rows.length>600?`<p class="muted small">يُعرض أحدث 600 من ${rows.length}. استخدم البحث أو جدول جوجل للباقي.</p>`:''}`:'<p class="muted small">لا توجد تعديلات مسجّلة.</p>'}</div>`;
 }
 /* ---------- الإعدادات ---------- */
 function settingsScreen(){
@@ -1330,13 +1514,14 @@ function settingsScreen(){
   const st=S.settings||{};
   const autoAbsentOn=st.autoAbsentEnabled!==false, remindersOn=st.remindersEnabled!==false;
   const cur=U.stab||'general';
-  const subs=[['general','عام'],['shifts','الفترات'],['duty','المناوبة'],['extra','الدوام الإضافي'],['msgs','الرسائل'],['records','الإجازات والسجلات']];
+  const subs=[['general','عام'],['shifts','الفترات'],['duty','المناوبة'],['extra','الدوام الإضافي'],['msgs','الرسائل'],['records','الإجازات والسجلات'],['users','المستخدمون والصلاحيات'],['audit','سجل التعديلات']];
   const nav=`<div class="subnav no-print">${subs.map(([k,l])=>`<button class="btn sm${cur===k?' primary':''}" data-act="stab" data-v="${k}">${l}</button>`).join('')}</div>`;
   let content='';
   if(cur==='general')content=`
   <div class="card"><h3>سلوك الحضور العام</h3>
     <label class="switch"><input type="checkbox" id="tg-absent" ${autoAbsentOn?'checked':''}><span><b>قلب الحالة تلقائياً إلى غياب بعد نهاية الفترة</b><br><span class="muted small">من لم يسجّل حضوره حتى نهاية دوام فترته تصبح حالته «غياب» تلقائياً. عند الإيقاف تبقى حالته «لم يسجّل بعد» دون قلبها.</span></span></label>
     <label class="switch"><input type="checkbox" id="tg-remind" ${remindersOn?'checked':''}><span><b>تذكير الحضور والانصراف بالصوت</b><br><span class="muted small">يظهر تذكير صوتي ونصي للفرد إن حان وقت فترته ولم يسجّل، أو انتهت ولم ينصرف. يعمل ما دام التطبيق مفتوحاً على جواله.</span></span></label>
+    <label class="switch"><input type="checkbox" id="tg-manual" ${st.manualAll!==false?'checked':''}><span><b>إظهار التسجيل اليدوي للجميع ولكل الفترات</b><br><span class="muted small">يظهر زر «وقت يدوي» لكل معلم وموظف في كل فترة، ليسجّل وقت حضوره أو انصرافه إن نسي التوقيع، ضمن حدود الفترة ودون تجاوز الوقت الحالي. ويظهر للإدارة أنه تسجيل يدوي في الكشف وسجل التعديلات. عند الإيقاف يظهر فقط للفترات المفعّل فيها من «الفترات».</span></span></label>
     <button class="btn primary" data-act="savebehavior">حفظ</button></div>
   <div class="card"><h3>موقع العمل</h3><p class="muted small" style="margin-top:0">يُستخدم لتقييد التوقيع بنطاق موقع العمل للفترات التي تفعّل ذلك أعلاه. النطاق الحالي: ${st.workRadius||'—'} متر حول الإحداثيات ${st.workLat||'—'}, ${st.workLng||'—'}.</p>
     <div class="row" style="align-items:flex-end;margin-bottom:8px"><div class="field sp" style="margin:0;min-width:200px"><label for="ml-link">رابط خرائط جوجل (اختياري)</label><input type="text" id="ml-link" placeholder="الصق رابط خرائط جوجل هنا"></div><button class="btn sm" data-act="resolvemap">استخراج الإحداثيات</button></div>
@@ -1344,12 +1529,19 @@ function settingsScreen(){
     <div class="field"><label for="ml-r">نطاق القبول (متر)</label><input type="number" id="ml-r" min="10" max="5000" value="${esc(st.workRadius||'200')}"></div>
     <button class="btn primary" data-act="savelocation">حفظ الموقع</button>
     <p class="muted small" style="margin:8px 0 0">استخراج الإحداثيات من الرابط تلقائي وقد لا ينجح دائماً؛ الإدخال اليدوي لخط العرض والطول أضمن.</p></div>
+  <div class="card"><h3>${ic('bell')} تنبيهات الجوال (تصل والجهاز مقفل)</h3>
+    <p class="muted small" style="margin-top:0">يرسل الخادم كل 5 دقائق تذكيراً صوتياً ونصياً لكل جهاز فعّل التنبيهات من التطبيق المثبّت: قبل بداية الفترة لمن لم يسجّل حضوره، وعند نهايتها لمن لم ينصرف، وقبل المناوبة، وعند وصول رسالة من الإدارة. لا يُذكَّر من لديه غياب معتمد أو سجّل حضوره.</p>
+    <label class="switch"><input type="checkbox" id="pu-on" ${st.pushEnabled!==false?'checked':''}><span><b>تفعيل تنبيهات الجوال</b><br><span class="muted small">عند الإيقاف لا يُرسل أي تنبيه للأجهزة (يبقى التذكير داخل التطبيق عند فتحه).</span></span></label>
+    <label class="switch"><input type="checkbox" id="pu-req" ${st.pushAdminReq!==false?'checked':''}><span><b>تنبيه الإدارة بالطلبات الجديدة</b><br><span class="muted small">يصل لأجهزة المدير العام ومن لديه صلاحية الطلبات وفعّل التنبيهات.</span></span></label>
+    <div class="field"><label for="pu-lead">تذكير الحضور قبل بداية الفترة بـ (دقيقة)</label><input type="number" id="pu-lead" min="0" max="120" value="${Number(st.pushInLead)||0}"></div>
+    <button class="btn primary" data-act="savepush">حفظ</button>
+    <p class="muted small" style="margin:8px 0 0">يحتاج كل معلم وموظف أن يضغط مرة واحدة «تفعيل التنبيهات على هذا الجهاز» من صفحته. على الآيفون يجب تثبيت التطبيق على الشاشة الرئيسية أولاً (iOS 16.4 أو أحدث).</p></div>
   <div class="card"><h3>رسائل التذكير</h3><p class="muted small" style="margin-top:0">تظهر هذه الرسائل تذكيراً بصوت وإشعار للمعلم أو الموظف عند حلول وقت الفترة ولم يسجّل بعد، وعند نهايتها إن نسي الانصراف.</p>
     <div class="field"><label for="rm-in">رسالة تذكير الحضور</label><input type="text" id="rm-in" maxlength="200" value="${esc(st.remindInText||'')}"></div>
     <div class="field"><label for="rm-out">رسالة تذكير الانصراف</label><input type="text" id="rm-out" maxlength="200" value="${esc(st.remindOutText||'')}"></div>
     <button class="btn primary" data-act="saveremind">حفظ الرسائل</button></div>
   <div class="card"><h3>البيانات</h3><p class="muted small" style="margin-top:0">كل السجلات محفوظة في جدول جوجل الخاص بك، ويمكنك فتحه للأرشفة أو التصدير أو الطباعة.</p>${S.sheetUrl?`<a class="btn" href="${esc(S.sheetUrl)}" target="_blank" rel="noopener">فتح جدول البيانات</a>`:''}</div>
-  <div class="card"><h3>حسابي</h3><div class="row"><button class="btn sm" data-act="pinmodal">تغيير رمز الإدارة</button><button class="btn sm" data-act="logout">تسجيل الخروج</button></div>${installCard()}</div>`;
+  <div class="card"><h3>حسابي</h3><div class="row"><button class="btn sm" data-act="pinmodal">تغيير رمز الإدارة</button><button class="btn sm" data-act="logout">تسجيل الخروج</button></div>${pushCard(true)}${installCard()}</div>`;
   else if(cur==='shifts')content=`
   <div class="card"><div class="row"><h3 style="margin:0">فترات الدوام</h3><span class="sp"></span><button class="btn sm primary" data-act="addshift">${ic('plus')}إضافة فترة</button></div>
     <p class="muted small" style="margin:6px 0 4px">حدّد أوقات كل فترة وعيّن عليها المعلمين والموظفين. يمكن للفرد الواحد أن يكون له أكثر من فترة في اليوم (مثل صباحية ومسائية)، ويسجّل حضوراً وانصرافاً لكل فترة. يُحسب التأخر والخروج المبكر لكل فترة على حدة.</p>
@@ -1360,6 +1552,8 @@ function settingsScreen(){
   else if(cur==='duty')content=dutySettingsHtml();
   else if(cur==='extra')content=extraSettingsHtml();
   else if(cur==='msgs')content=msgSettingsHtml();
+  else if(cur==='users')content=usersHtml();
+  else if(cur==='audit')content=auditHtml();
   else content=`
   <div class="card"><h3>الإجازات الرسمية</h3><p class="muted small" style="margin-top:0">لا تُحتسب هذه الأيام غياباً في الكشوف، ولا يُسجَّل فيها حضور. الجمعة والسبت خارج الدوام دائماً.</p>
     <div class="row" style="align-items:flex-end"><div class="field" style="margin:0"><label for="hd-d">التاريخ</label><input type="date" id="hd-d"></div><div class="field sp" style="margin:0;min-width:160px"><label for="hd-n">الاسم</label><input type="text" id="hd-n" maxlength="80" placeholder="مثال: اليوم الوطني"></div><button class="btn primary" data-act="addhol">إضافة</button></div>
@@ -1502,11 +1696,14 @@ const A={
   retryState:()=>{U.err='';render();loadState().catch(e=>{if(e.auth)logout('انتهت الجلسة. سجّل الدخول من جديد.');else{U.err=e.message;render()}})},
   lmode:d=>{U.lmode=d.v;render()},
   dologin:()=>doLogin(), doactivate:()=>doActivate(),
-  logout:()=>{if(confirm('تسجيل الخروج من هذا الجوال؟'))logout()},
+  logout:()=>{if(confirm('تسجيل الخروج من هذا الجوال؟'))pushLeave().finally(()=>logout())},
   refresh:()=>guard(async()=>{await loadState();toast('تم التحديث')}),
   punch:d=>doPunch(d.sid), punchp:d=>doPunch(d.sid), bioOn:()=>bioOn(), bioOff:()=>{Store.del('att_bio_'+Sess.tid);toast('تم إيقاف قفل البصمة');render()},
   manualopen:d=>manualTimeModal(d.sid),
   submitmanual:d=>{const t=$('#mt-t').value;if(!t){toast('اختر وقتاً','bad');return}closeModal();doPunch(d.sid,t)},
+  pushon:async()=>{if(Push.busy)return;Push.busy=true;try{if(await pushSubscribe(true)){toast('تم تفعيل التنبيهات على هذا الجهاز','ok');try{await pushTest()}catch(e){}}}catch(e){toast((e&&e.message)||'تعذّر تفعيل التنبيهات','bad')}finally{Push.busy=false;render()}},
+  pushtest:async()=>{try{await pushTest();toast('أُرسل تنبيه تجريبي، سيظهر خلال ثوانٍ','ok')}catch(e){toast((e&&e.message)||'تعذّر الإرسال','bad')}},
+  savepush:()=>{const m=parseInt($('#pu-lead').value,10);if(isNaN(m)||m<0||m>120){toast('أدخل عدد دقائق بين 0 و120','bad');return}act('settingsSave',{pushEnabled:$('#pu-on').checked,pushAdminReq:$('#pu-req').checked,pushInLead:m},'تم الحفظ')},
   reqnotif:()=>{if(!('Notification' in window)){toast('هذا المتصفح لا يدعم الإشعارات','bad');return}Notification.requestPermission().then(p=>{toast(p==='granted'?'تم تفعيل التذكير':'لم تُمنح الصلاحية');render()})},
   pinmodal:()=>pinModal(), savepin:()=>savePin(),
   newreq:()=>newReqModal(), rtype:d=>setReqType(d.v), sendreq:()=>sendReq(),
@@ -1544,7 +1741,17 @@ const A={
   resolvemap:()=>{const link=$('#ml-link').value.trim();if(!link){toast('الصق الرابط أولاً','bad');return}act('resolveMapLink',{url:link},r=>`تم استخراج الإحداثيات (${r.lat}, ${r.lng})`)},
   savelocation:()=>{const lat=$('#ml-lat').value.trim(),lng=$('#ml-lng').value.trim(),r0=$('#ml-r').value;if(!lat||!lng){toast('أدخل الإحداثيات','bad');return}act('settingsSave',{workLat:lat,workLng:lng,workRadius:r0},'تم حفظ الموقع')},
   saveremind:()=>{act('settingsSave',{remindInText:$('#rm-in').value.trim(),remindOutText:$('#rm-out').value.trim()},'تم حفظ الرسائل')},
-  stab:d=>{U.stab=d.v;render();scrollTo(0,0)},
+  stab:d=>{U.stab=d.v;if(d.v==='audit')U.audit=null;render();scrollTo(0,0)},
+  newuser:()=>userModal(''), edituser:d=>userModal(d.id),
+  saveuser:d=>{const n=$('#us-n').value.trim(),pn=$('#us-p').value.trim();if(!n){toast('اكتب الاسم','bad');return}
+    if(!d.id&&!/^\d{4,8}$/.test(pn)){toast('الرمز يجب أن يكون من 4 إلى 8 أرقام','bad');return}
+    if(pn&&!/^\d{4,8}$/.test(pn)){toast('الرمز يجب أن يكون من 4 إلى 8 أرقام','bad');return}
+    const pl={id:d.id||'',name:n,perms:$$('#modal input[name=usp]:checked').map(i=>i.value)};if(pn)pl.pin=pn;if(d.id)pl.active=$('#us-a').checked;
+    act('userSave',pl,'تم حفظ المستخدم',closeModal)},
+  deluser:d=>{if(confirm('حذف هذا المستخدم؟ لن يستطيع الدخول، ويبقى اسمه في سجل التعديلات.'))act('userDelete',{id:d.id},'تم الحذف')},
+  saveowner:()=>act('settingsSave',{ownerName:$('#ow-n').value.trim()},'تم الحفظ'),
+  auditreload:()=>{U.audit=null;render()},
+  auditcsv:()=>{const q=v=>`"${String(v??'').replace(/"/g,'""')}"`;const rows=[['الوقت','المستخدم','الإجراء','التفاصيل']].concat((U.audit||[]).map(x=>[fmtAt(x.at),x.by,x.action,x.details]));downloadText(`سجل-التعديلات-${today()}.csv`,'\ufeff'+rows.map(r=>r.map(q).join(',')).join('\r\n'))},
   pickall:d=>$$(`input[name="${d.n}"]`).forEach(i=>i.checked=true),
   picknone:d=>$$(`input[name="${d.n}"]`).forEach(i=>i.checked=false),
   picktype:d=>$$(`input[name="${d.n}"]`).forEach(i=>i.checked=i.dataset.kind===d.v),
@@ -1564,7 +1771,7 @@ const A={
     act('msgSend',{text,tids:t,from:$('#ms-d').value},r=>`تم إرسال ${r.sent} ${r.sent>1?'رسائل':'رسالة'}`)},
   msgdel:d=>{if(confirm('حذف هذه الرسالة؟ ستختفي من صفحة المستلم أيضاً.'))act('msgDelete',{id:d.id},'تم الحذف')},
   msgread:d=>act('msgRead',{id:d.id},'شكراً، تم تأكيد الاطلاع'),
-  savebehavior:()=>act('settingsSave',{autoAbsentEnabled:$('#tg-absent').checked,remindersEnabled:$('#tg-remind').checked},'تم الحفظ'),
+  savebehavior:()=>act('settingsSave',{autoAbsentEnabled:$('#tg-absent').checked,remindersEnabled:$('#tg-remind').checked,manualAll:$('#tg-manual').checked},'تم الحفظ'),
   delshift:d=>{if(confirm('حذف هذه الفترة؟'))act('shiftDelete',{id:d.id},'تم حذف الفترة')},
   assignshift:d=>assignModal(d.id),
   selall:()=>$$('#modal input[name=asg]').forEach(i=>i.checked=true), selnone:()=>$$('#modal input[name=asg]').forEach(i=>i.checked=false),
@@ -1598,7 +1805,10 @@ document.addEventListener('keydown',e=>{
 document.addEventListener('change',e=>{
   const el=e.target,k=el.dataset&&el.dataset.bind;if(!k)return;
   if(k==='lsel'){U.lsel=el.value;render();return}
+  if(k==='lusr'){U.lusr=el.value;return}
   if(k==='dshift'){U.dshift=el.value;render();return}
+  if(k==='au'){U.au=el.value;render();return}
+  if(k==='aq'){U.aq=el.value;render();return}
   if(!U.rep)initRep();
   const r=U.rep;
   if(k==='rtid')r.tid=el.value;
@@ -1638,6 +1848,7 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll()});
 /* ---------- البدء ---------- */
 (async function init(){
   $('#logoTA').src=LOGO_TA;$('#logoIB').src=LOGO_IB;
+  if(Sess&&loadCached())render();
   if(Sess){
     try{await loadState();maybeGreet()}
     catch(e){
