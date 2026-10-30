@@ -1,4 +1,5 @@
 {
+  "id": "/goto/masrofat/",
   "name": "مصروفات مجمع ابن تيمية",
   "short_name": "المصروفات",
   "lang": "ar",
@@ -8,5 +9,9 @@
   "display": "standalone",
   "background_color": "#f4f2ec",
   "theme_color": "#14513f",
-  "icons": [{ "src": "logo-left.jpg", "sizes": "400x482", "type": "image/jpeg", "purpose": "any" }]
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
 }
