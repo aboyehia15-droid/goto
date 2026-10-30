@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>مصروفات مجمع ابن تيمية</title>
+<meta name="theme-color" content="#14513f">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="logo-left.jpg">
+<link rel="apple-touch-icon" href="logo-left.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Amiri:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css?v=1">
+<script src="config.js?v=1"></script>
+</head>
+<body>
+
+<!-- ============ شاشة الدخول ============ -->
+<section id="authView" class="auth" hidden>
+  <div class="auth-card">
+    <div class="auth-logos"><img data-logo="right" alt=""><img data-logo="left" alt=""></div>
+    <h1 data-app-name>مصروفات مجمع ابن تيمية</h1>
+
+    <form id="apiForm" class="stack" hidden>
+      <p class="muted">ألصق رابط الخادم (تطبيق الويب من Apps Script) لمرة واحدة على هذا الجهاز.</p>
+      <label>رابط الخادم<input name="url" dir="ltr" placeholder="https://script.google.com/macros/s/.../exec" required></label>
+      <button class="btn primary">حفظ ومتابعة</button>
+    </form>
+
+    <form id="firstForm" class="stack" hidden>
+      <p class="note">أول تشغيل: أنشئ حساب المدير. المدير يوافق على المستخدمين ويمنحهم الصلاحيات.</p>
+      <label>الاسم<input name="name" required autocomplete="name"></label>
+      <label>اسم الدخول<input name="username" dir="ltr" required autocomplete="username"></label>
+      <label>كلمة المرور<input name="password" type="password" required minlength="6" autocomplete="new-password"></label>
+      <button class="btn primary">إنشاء حساب المدير</button>
+    </form>
+
+    <form id="loginForm" class="stack" hidden>
+      <label>اسم الدخول<input name="username" dir="ltr" required autocomplete="username"></label>
+      <label>كلمة المرور<input name="password" type="password" required autocomplete="current-password"></label>
+      <button class="btn primary">دخول</button>
+      <button type="button" class="link" id="toRegister">ليس لديك حساب؟ اطلب حساباً جديداً</button>
+    </form>
+
+    <form id="registerForm" class="stack" hidden>
+      <p class="muted">يُرسل طلبك للمدير، وتستطيع الدخول بعد موافقته ومنحك الصلاحيات.</p>
+      <label>الاسم<input name="name" required></label>
+      <label>اسم الدخول<input name="username" dir="ltr" required autocomplete="username"></label>
+      <label>كلمة المرور<input name="password" type="password" required minlength="6" autocomplete="new-password"></label>
+      <button class="btn primary">إرسال الطلب</button>
+      <button type="button" class="link" id="toLogin">لدي حساب — دخول</button>
+    </form>
+    <p class="auth-err" id="authMsg"></p>
+  </div>
+</section>
+
+<!-- ============ البرنامج ============ -->
+<div id="appView" hidden>
+  <header class="topbar">
+    <div class="brand">
+      <img data-logo="left" alt="">
+      <div><b data-app-name>مصروفات مجمع ابن تيمية</b><small id="whoami"></small></div>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button data-tab="list" class="on">الفواتير</button>
+      <button data-tab="upload" data-perm="add">رفع فواتير</button>
+      <button data-tab="reports" data-perm="reports">الكشوف</button>
+      <button data-tab="log" data-perm="admin">السجل</button>
+    </nav>
+    <div class="top-actions">
+      <button class="icon-btn" id="btnSettings" title="الإعدادات" data-perm="admin" aria-label="الإعدادات">
+        <svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+      </button>
+      <button class="icon-btn" id="btnUser" title="حسابي" aria-label="حسابي">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <!-- قائمة الفواتير -->
+    <section class="view" id="view-list">
+      <div class="stats" id="stats"></div>
+      <div class="toolbar">
+        <input type="search" id="fSearch" placeholder="بحث: المؤسسة، البيان، رقم الفاتورة، الرمز…">
+        <select id="fKind"><option value="">كل الأنواع</option><option>ضريبية</option><option>بدون ضريبة</option><option>ورقة مكتوبة</option></select>
+        <select id="fCat"><option value="">كل التصنيفات</option></select>
+        <select id="fStatus"><option value="">كل الحالات</option><option>سليمة</option><option>مكررة</option><option>تحتاج مراجعة</option></select>
+        <label class="inline">من <input type="date" id="fFrom"></label>
+        <label class="inline">إلى <input type="date" id="fTo"></label>
+        <button class="btn ghost sm" id="fClear">مسح</button>
+        <button class="btn ghost sm" id="btnRefresh" title="تحديث">↻ تحديث</button>
+      </div>
+      <div id="invList" class="inv-list"></div>
+    </section>
+
+    <!-- رفع الفواتير -->
+    <section class="view" id="view-upload" hidden>
+      <div class="upload-grid">
+        <div>
+          <label class="drop" id="drop">
+            <input type="file" id="fileInput" accept="image/*,application/pdf" multiple hidden>
+            <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0-4 4m4-4 4 4"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+            <b>اسحب الفواتير هنا أو اضغط للاختيار</b>
+            <span>صورة أو PDF — فاتورة واحدة أو مجموعة دفعة واحدة</span>
+          </label>
+          <div class="row gap">
+            <label class="btn ghost"><input type="file" accept="image/*" capture="environment" id="camInput" hidden>📷 تصوير فاتورة</label>
+            <button class="btn ghost" id="btnManual">✍️ إدخال يدوي بدون صورة</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>خيارات الرفع</h3>
+          <div class="field">نوع المستند
+            <div class="seg" id="upKind">
+              <label><input type="radio" name="upKind" value="" checked><span>تلقائي</span></label>
+              <label><input type="radio" name="upKind" value="ضريبية"><span>ضريبية</span></label>
+              <label><input type="radio" name="upKind" value="بدون ضريبة"><span>بدون ضريبة</span></label>
+              <label><input type="radio" name="upKind" value="ورقة مكتوبة"><span>ورقة مكتوبة</span></label>
+            </div>
+          </div>
+          <label class="field">التصنيف<select id="upCat"><option value="">تلقائي (يقترحه البرنامج)</option></select></label>
+          <label class="check"><input type="checkbox" id="upAi" checked> قراءة الفاتورة آلياً وتعبئة بياناتها</label>
+          <p class="muted small">الفاتورة المكررة تُحفظ وعليها علامة «مكررة» ولا تدخل في الإجماليات.</p>
+        </div>
+      </div>
+      <div id="queue" class="queue"></div>
+    </section>
+
+    <!-- الكشوف -->
+    <section class="view" id="view-reports" hidden>
+      <div class="report-controls card">
+        <div class="field">الكشف
+          <div class="seg wrap" id="rKind">
+            <label><input type="radio" name="rKind" value="" checked><span>كشف كامل بجميع الفواتير</span></label>
+            <label><input type="radio" name="rKind" value="ضريبية"><span>الفواتير الضريبية</span></label>
+            <label><input type="radio" name="rKind" value="بدون ضريبة"><span>فواتير بدون ضريبة</span></label>
+            <label><input type="radio" name="rKind" value="ورقة مكتوبة"><span>أوراق مكتوبة بدل الفاتورة</span></label>
+          </div>
+        </div>
+        <div class="grid3">
+          <div class="field">الفترة
+            <div class="row gap"><input type="date" id="rFrom"><span>إلى</span><input type="date" id="rTo"></div>
+            <div class="chips" id="rQuick">
+              <button data-q="all">الكل</button><button data-q="month">هذا الشهر</button><button data-q="last">الشهر الماضي</button><button data-q="year">هذه السنة</button>
+            </div>
+          </div>
+          <label class="field">التصنيف<select id="rCat"><option value="">كل التصنيفات</option></select>
+            <span class="check"><input type="checkbox" id="rGroup"> تقرير حسب التصنيف (مجاميع لكل تصنيف)</span>
+          </label>
+          <div class="field">الشعارات
+            <div class="seg wrap" id="rLogo">
+              <label><input type="radio" name="rLogo" value="both" checked><span>الشعاران</span></label>
+              <label><input type="radio" name="rLogo" value="right"><span>شعار الجمعية</span></label>
+              <label><input type="radio" name="rLogo" value="left"><span>شعار المجمع</span></label>
+              <label><input type="radio" name="rLogo" value="none"><span>بدون شعار</span></label>
+            </div>
+          </div>
+        </div>
+        <details class="more">
+          <summary>أعمدة وخيارات إضافية</summary>
+          <div class="checks">
+            <label class="check"><input type="checkbox" id="rImages"> صور الفواتير أمام بياناتها</label>
+            <label class="check"><input type="checkbox" id="rVat"> المبلغ قبل الضريبة والضريبة</label>
+            <label class="check"><input type="checkbox" id="rVatNo"> الرقم الضريبي للمورد</label>
+            <label class="check"><input type="checkbox" id="rKindCol"> نوع المستند</label>
+            <label class="check"><input type="checkbox" id="rWho"> من أدخلها ومتى</label>
+            <label class="check"><input type="checkbox" id="rDups"> إظهار المكررة (لا تدخل في الإجمالي)</label>
+            <label class="check"><input type="checkbox" id="rSign" checked> خانات التوقيع</label>
+            <label class="field inline">التاريخ
+              <select id="rDate"><option>ميلادي</option><option>هجري</option><option>كلاهما</option></select>
+            </label>
+          </div>
+        </details>
+        <div class="row gap end">
+          <button class="btn primary" id="btnReport">عرض الكشف</button>
+          <button class="btn" id="btnPrint" disabled>🖨️ طباعة / حفظ PDF</button>
+          <button class="btn" id="btnExcel" disabled>⬇️ تصدير Excel</button>
+        </div>
+      </div>
+      <div id="reportWrap" class="report-wrap"><p class="muted center">اختر نوع الكشف ثم اضغط «عرض الكشف».</p></div>
+    </section>
+
+    <!-- السجل -->
+    <section class="view" id="view-log" hidden>
+      <div class="toolbar"><input type="search" id="logSearch" placeholder="بحث في السجل…"><button class="btn ghost sm" id="logReload">↻ تحديث</button></div>
+      <div id="logList" class="table-wrap"></div>
+    </section>
+  </main>
+</div>
+
+<!-- نافذة عامة -->
+<dialog id="modal"><div class="modal-box" id="modalBox"></div></dialog>
+<div id="toast" class="toast" role="status"></div>
+
+<!-- الكشف المطبوع -->
+<div id="printArea"></div>
+
+<script src="app.js?v=1"></script>
+</body>
+</html>

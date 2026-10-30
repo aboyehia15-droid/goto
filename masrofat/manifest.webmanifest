@@ -1,0 +1,12 @@
+{
+  "name": "مصروفات مجمع ابن تيمية",
+  "short_name": "المصروفات",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f2ec",
+  "theme_color": "#14513f",
+  "icons": [{ "src": "logo-left.jpg", "sizes": "400x482", "type": "image/jpeg", "purpose": "any" }]
+}
