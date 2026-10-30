@@ -104,11 +104,8 @@ function setup() {
   MEMO = {};
   const ss = ss_();
   PropertiesService.getScriptProperties().setProperty('SSID', ss.getId());
+  try { ss.setActiveSheet(ss.getSheets()[0]); } catch (e) { }
   Object.keys(SHEETS).forEach(function (k) { sheet_(k); });
-  ['Sheet1', 'ورقة1', 'الورقة1'].forEach(function (nm) {
-    const d = ss.getSheetByName(nm);
-    if (d && ss.getSheets().length > 1 && d.getLastRow() === 0) ss.deleteSheet(d);
-  });
   Object.keys(DEFAULTS).forEach(function (k) { if (getSetting_(k) === null) setSetting_(k, DEFAULTS[k]); });
   secret_();
   folder_();
@@ -186,7 +183,9 @@ function sheet_(k) {
   const s = ss_();
   let sh = s.getSheetByName(def.name);
   if (!sh) {
-    sh = s.insertSheet(def.name);
+    // نحدد موضع الورقة الجديدة صراحةً حتى لا يعتمد الإدراج على «الورقة النشطة» (قد تكون محذوفة)
+    try { sh = s.insertSheet(def.name, s.getSheets().length); }
+    catch (e) { s.setActiveSheet(s.getSheets()[0]); sh = s.insertSheet(def.name, s.getSheets().length); }
     sh.setRightToLeft(true);
   }
   const n = def.cols.length;
