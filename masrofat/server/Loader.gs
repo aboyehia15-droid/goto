@@ -28,6 +28,12 @@ function authorize_() {
   CacheService.getScriptCache();
   LockService.getScriptLock();
   DriveApp.getRootFolder();
+  // سطور لا تُنفَّذ أبداً، وجودها فقط يجعل جوجل يطلب صلاحية الكتابة في Drive والجداول
+  if (Date.now() < 0) {
+    DriveApp.createFolder('x').createFile(Utilities.newBlob('x')).setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    DriveApp.getFileById('x').getBlob();
+    SpreadsheetApp.openById('x').insertSheet('x');
+  }
   ScriptApp.getOAuthToken();
   ContentService.createTextOutput('');
   Utilities.getUuid();
