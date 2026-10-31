@@ -903,7 +903,7 @@ function callGemini_(parts) {
   const models = [S_('aiModel') || DEFAULTS.aiModel, 'gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-lite', 'gemini-2.0-flash']
     .filter(function (m, i, a) { return m && a.indexOf(m) === i; });
   const started = Date.now();
-  let lastErr = '', busy = false, quota = false;
+  let lastErr = '', busy = false, quota = false, daily = false;
   for (let round = 0; round < 2; round++) {
     for (let i = 0; i < models.length; i++) {
       if (Date.now() - started > 150000) break;   // لا نتجاوز مهلة جوجل
@@ -928,11 +928,12 @@ function callGemini_(parts) {
       if ((code === 400 || code === 403) && /API key|API_KEY|permission/i.test(txt)) throw new Error('مفتاح Gemini غير صحيح أو غير مفعّل');
       if (code === 400 && GEN_CFG_ && GEN_CFG_.responseSchema) { GEN_CFG_ = { temperature: 0, responseMimeType: 'application/json' }; i--; continue; }
       if (code === 503 || code === 500 || code === 502 || code === 504) { busy = true; Utilities.sleep(1500 + round * 2500); continue; }
-      if (code === 429) { quota = true; Utilities.sleep(2000); continue; }
+      if (code === 429) { quota = true; if (/per ?day|PerDay|daily/i.test(txt)) daily = true; Utilities.sleep(2000); continue; }
       // 404 أو نموذج غير متاح: ننتقل للنموذج التالي
     }
     Utilities.sleep(3000);
   }
+  if (daily) throw new Error('انتهى الحد اليومي المجاني لـ Gemini — يتجدد غداً، أو فعّل الدفع في Google AI Studio، أو استخدم Claude');
   if (busy) throw new Error('خدمة Gemini مزدحمة الآن — أعد القراءة بعد قليل');
   if (quota) throw new Error('تجاوزت حد Gemini المجاني مؤقتاً — أعد القراءة بعد دقيقة');
   throw new Error('تعذّرت القراءة الآلية (' + lastErr + ')');
@@ -966,6 +967,10 @@ function readWithAi_(b64, mime) {
     subtotal: num_(j.subtotal), vat: num_(j.vat), total: num_(j.total),
     description: String(j.description || ''), category: cats.indexOf(String(j.category || '')) >= 0 ? j.category : ''
   };
+  if (!o.total && !o.date && !o.vendor && !o.number) {
+    log_(null, 'قراءة فارغة', '', '', String(txt).slice(0, 500));
+    throw new Error('القارئ لم يستخرج أي بيانات من الصورة (قد تكون غير واضحة)');
+  }
   if (!o.total && (o.subtotal || o.vat)) o.total = Math.round(((Number(o.subtotal) || 0) + (Number(o.vat) || 0)) * 100) / 100;
   if (j.date_hijri) o.notes = 'التاريخ الهجري: ' + j.date_hijri;
   if (j.is_document === false) o.notes = (o.notes ? o.notes + ' — ' : '') + 'قد لا يكون المستند فاتورة';
