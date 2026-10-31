@@ -748,7 +748,33 @@ function rereadInvoice_(r, me) {
   if (!x.file_id) throw new Error('لا توجد صورة لهذه الفاتورة');
   const blob = DriveApp.getFileById(x.file_id).getBlob();
   const ai = readWithAi_(Utilities.base64Encode(blob.getBytes()), blob.getContentType());
-  return ai; // تُعرض في نافذة التعديل ليؤكدها المستخدم
+  if (!r.save) return ai; // تُعرض في نافذة التعديل ليؤكدها المستخدم
+  // حفظ مباشر: تُملأ الحقول الفارغة فقط، فلا يُمسّ ما عدّله المستخدم بيده
+  const lock = LockService.getScriptLock(); lock.waitLock(30000);
+  try {
+    MEMO.inv = null;
+    const y = getInv_(r.id);
+    const before = JSON.parse(JSON.stringify(y));
+    const fill = {};
+    EDITABLE.forEach(function (k) {
+      if (k === 'code' || ai[k] === '' || ai[k] == null) return;
+      const cur = y[k];
+      const empty = cur === '' || cur == null || (NUM_KEYS.indexOf(k) >= 0 && !Number(cur)) || (k === 'kind' && !y.total);
+      if (empty) fill[k] = ai[k];
+    });
+    if (fill.kind || fill.total) { if (!('subtotal' in fill)) y.subtotal = ''; if (!('vat' in fill)) y.vat = ''; }
+    cleanFields_(fill, y);
+    if (fill.category && categories_().indexOf(fill.category) < 0) y.category = '';
+    if (y.status !== STATUS.DUP) y.status = '';
+    const why = applyDup_(y);
+    if (!why) refreshStatus_(y);
+    y.updated_by = me.name; y.updated_at = now_();
+    writeInv_(y, y.row);
+    if (before.date !== y.date) sortInvSheet_();
+    log_(me, 'إعادة القراءة الآلية', y.code, y.id, Object.keys(fill).map(function (k) { return colName_(k) + ': ' + y[k]; }).join(' | ') + (why ? ' | مكررة: ' + why : ''));
+    const res = clientInv_(y); res._dupReason = why;
+    return res;
+  } finally { lock.releaseLock(); }
 }
 function fileData_(r) {
   const x = getInv_(r.id);
@@ -823,26 +849,41 @@ function parseJson_(txt) {
 }
 function callGemini_(parts) {
   const key = aiKey_('geminiKey');
-  const models = [S_('aiModel') || DEFAULTS.aiModel, 'gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash']
+  // عند الضغط على نموذج (503) ننتظر قليلاً ثم نجرب نموذجاً آخر بدل التوقف
+  const models = [S_('aiModel') || DEFAULTS.aiModel, 'gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-lite', 'gemini-2.0-flash']
     .filter(function (m, i, a) { return m && a.indexOf(m) === i; });
-  let lastErr = '';
-  for (let i = 0; i < models.length; i++) {
-    const res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(models[i]) + ':generateContent', {
-      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-      headers: { 'x-goog-api-key': key },
-      payload: JSON.stringify({ contents: [{ role: 'user', parts: parts }], generationConfig: { temperature: 0, responseMimeType: 'application/json' } })
-    });
-    const code = res.getResponseCode();
-    const txt = res.getContentText();
-    if (code === 200) {
-      const j = JSON.parse(txt);
-      const out = (((j.candidates || [])[0] || {}).content || {}).parts || [];
-      return out.map(function (p) { return p.text || ''; }).join('');
+  const started = Date.now();
+  let lastErr = '', busy = false, quota = false;
+  for (let round = 0; round < 2; round++) {
+    for (let i = 0; i < models.length; i++) {
+      if (Date.now() - started > 150000) break;   // لا نتجاوز مهلة جوجل
+      let res;
+      try {
+        res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(models[i]) + ':generateContent', {
+          method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+          headers: { 'x-goog-api-key': key },
+          payload: JSON.stringify({ contents: [{ role: 'user', parts: parts }], generationConfig: { temperature: 0, responseMimeType: 'application/json' } })
+        });
+      } catch (e) { lastErr = String(e.message || e); continue; }
+      const code = res.getResponseCode();
+      const txt = res.getContentText();
+      if (code === 200) {
+        const j = JSON.parse(txt);
+        const out = (((j.candidates || [])[0] || {}).content || {}).parts || [];
+        const t = out.map(function (p) { return p.text || ''; }).join('');
+        if (t) return t;
+        lastErr = 'رد فارغ'; continue;
+      }
+      lastErr = code + ': ' + (function () { try { return JSON.parse(txt).error.message; } catch (e) { return txt.slice(0, 200); } })();
+      if ((code === 400 || code === 403) && /API key|API_KEY|permission/i.test(txt)) throw new Error('مفتاح Gemini غير صحيح أو غير مفعّل');
+      if (code === 503 || code === 500 || code === 502 || code === 504) { busy = true; Utilities.sleep(1500 + round * 2500); continue; }
+      if (code === 429) { quota = true; Utilities.sleep(2000); continue; }
+      // 404 أو نموذج غير متاح: ننتقل للنموذج التالي
     }
-    lastErr = code + ': ' + (function () { try { return JSON.parse(txt).error.message; } catch (e) { return txt.slice(0, 200); } })();
-    if (code === 400 && /API key/i.test(txt)) throw new Error('مفتاح القراءة الآلية غير صحيح');
-    if (code !== 404 && code !== 400) { if (code === 429) throw new Error('تجاوزت حد القراءة الآلية المجاني مؤقتاً، حاول بعد دقيقة'); break; }
+    Utilities.sleep(3000);
   }
+  if (busy) throw new Error('خدمة Gemini مزدحمة الآن — أعد القراءة بعد قليل');
+  if (quota) throw new Error('تجاوزت حد Gemini المجاني مؤقتاً — أعد القراءة بعد دقيقة');
   throw new Error('تعذّرت القراءة الآلية (' + lastErr + ')');
 }
 function readWithAi_(b64, mime) {
