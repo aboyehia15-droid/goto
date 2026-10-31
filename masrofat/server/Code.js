@@ -73,6 +73,8 @@ const DEFAULTS = {
   currency: 'ريال',
   codePrefix: '',
   aiEnabled: 'نعم',
+  aiProvider: 'تلقائي',            // تلقائي = Claude إن وُجد مفتاحه، وإلا Gemini
+  claudeModel: 'claude-sonnet-5-5',
   aiModel: 'gemini-flash-latest',
   dupHash: 'نعم',
   dupNumber: 'نعم',
@@ -84,7 +86,7 @@ const DEFAULTS = {
   logoRight: '',
   logoLeft: ''
 };
-const SECRET_KEYS = ['geminiKey'];
+const SECRET_KEYS = ['geminiKey', 'claudeKey'];
 
 // =====================================================================
 //  نقاط الدخول
@@ -275,9 +277,12 @@ function publicSettings_() {
 function getSettingsApi_(r, me) {
   const o = publicSettings_();
   if (can_(me, 'admin')) {
-    const key = PropertiesService.getScriptProperties().getProperty('geminiKey') || '';
-    o.geminiKeySet = !!key;
-    o.geminiKeyHint = key ? key.slice(0, 4) + '••••' + key.slice(-4) : '';
+    SECRET_KEYS.forEach(function (n) {
+      const key = PropertiesService.getScriptProperties().getProperty(n) || '';
+      o[n + 'Set'] = !!key;
+      o[n + 'Hint'] = key ? key.slice(0, 7) + '••••' + key.slice(-4) : '';
+    });
+    o.aiActive = provider_();
   }
   return o;
 }
@@ -285,11 +290,12 @@ function saveSettingsApi_(r, me) {
   const s = r.settings || {};
   const changed = [];
   Object.keys(s).forEach(function (k) {
-    if (k === 'geminiKey') {
+    if (SECRET_KEYS.indexOf(k) >= 0) {
       const v = String(s[k] || '').trim();
-      if (v === '__clear__') PropertiesService.getScriptProperties().deleteProperty('geminiKey');
-      else if (v) PropertiesService.getScriptProperties().setProperty('geminiKey', v);
-      changed.push('مفتاح القراءة الآلية');
+      if (v === '__clear__') PropertiesService.getScriptProperties().deleteProperty(k);
+      else if (v) PropertiesService.getScriptProperties().setProperty(k, v);
+      else return;
+      changed.push(k === 'claudeKey' ? 'مفتاح Claude' : 'مفتاح Gemini');
       return;
     }
     if (!(k in DEFAULTS)) return;
@@ -532,6 +538,19 @@ function writeInv_(o, row) {
   MEMO.inv = null;
   return row;
 }
+// ترتيب ورقة الفواتير حسب تاريخ الفاتورة (الأقدم في الأعلى)، ثم وقت الإدخال
+function sortInvSheet_() {
+  try {
+    const sh = sheet_('inv'), n = sh.getLastRow() - 1;
+    if (n < 2) return;
+    sh.getRange(2, 1, n, INV_KEYS.length).sort([
+      { column: INV_KEYS.indexOf('date') + 1, ascending: true },
+      { column: INV_KEYS.indexOf('created_at') + 1, ascending: true }
+    ]);
+    sh.setRowHeights(2, n, 110);
+    MEMO.inv = null;
+  } catch (e) { console.warn('sort: ' + e); }
+}
 function nextCode_() {
   const prefix = S_('codePrefix');
   let max = 0;
@@ -544,11 +563,17 @@ function nextCode_() {
 function normNum_(s) { return String(s || '').replace(/[٠-٩]/g, function (d) { return '٠١٢٣٤٥٦٧٨٩'.indexOf(d); }).replace(/[^0-9A-Za-z]/g, '').replace(/^0+/, '').toUpperCase(); }
 function normName_(s) { return String(s || '').replace(/[\sً-ْـ.,،\-]/g, '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').toLowerCase(); }
 
+// هل الفاتورة a أُدخلت قبل b؟ (الأصل دائماً هو الأقدم إدخالاً)
+function older_(a, b) {
+  if (!b.created_at) return true;
+  const x = a.created_at || '', y = b.created_at;
+  return x < y || (x === y && a.row < b.row);
+}
 // يبحث عن فاتورة أصلية تطابق هذه — يعيدها أو null
 function findDup_(o) {
   if (o.not_dup === 'نعم') return null;
   // الأصل دائماً هو الأقدم إدخالاً، فلا تُعلَّم فاتورة قديمة مكررةً من فاتورة أحدث منها
-  const list = invoices_().filter(function (x) { return x.deleted !== 'نعم' && x.id !== o.id && x.status !== STATUS.DUP && (!o.row || x.row < o.row); });
+  const list = invoices_().filter(function (x) { return x.deleted !== 'نعم' && x.id !== o.id && x.status !== STATUS.DUP && older_(x, o); });
   const num = normNum_(o.number), vat = normNum_(o.vat_no), total = Number(o.total), vend = normName_(o.vendor);
   for (let i = 0; i < list.length; i++) {
     const x = list[i];
@@ -655,6 +680,7 @@ function addInvoice_(r, me) {
     o.created_by = me.name; o.created_at = now_();
     o.deleted = ''; o.not_dup = '';
     writeInv_(o);
+    sortInvSheet_();
     log_(me, file ? 'رفع فاتورة' : 'إدخال يدوي', o.code, o.id, [o.vendor, o.total, o.kind, why ? 'مكررة: ' + why + ' (' + o.dup_of + ')' : ''].filter(String).join(' | '));
     const res = clientInv_(o);
     res._dupReason = why; res._aiError = aiErr; res._ai = !!ai;
@@ -683,6 +709,7 @@ function updateInvoice_(r, me) {
     if (!why) refreshStatus_(x);
     x.updated_by = me.name; x.updated_at = now_();
     writeInv_(x, x.row);
+    if (before.date !== x.date) sortInvSheet_();
     const diff = EDITABLE.filter(function (k) { return String(before[k]) !== String(x[k]); }).map(function (k) { return colName_(k) + ': ' + before[k] + ' ← ' + x[k]; });
     if (r.file && r.file.data) diff.push('استبدال صورة الفاتورة');
     log_(me, 'تعديل فاتورة', x.code, x.id, diff.join(' | ') + (why ? ' | مكررة: ' + why : ''));
@@ -742,13 +769,60 @@ function fileData_(r) {
 // =====================================================================
 //  القراءة الآلية للفاتورة (Gemini)
 // =====================================================================
-function aiKey_() {
-  const k = PropertiesService.getScriptProperties().getProperty('geminiKey');
-  if (!k) throw new Error('لم يُضبط مفتاح القراءة الآلية في الإعدادات');
+function aiKey_(name) {
+  const k = PropertiesService.getScriptProperties().getProperty(name || 'geminiKey');
+  if (!k) throw new Error('لم يُضبط مفتاح ' + (name === 'claudeKey' ? 'Claude' : 'Gemini') + ' في الإعدادات');
   return k;
 }
+// أي خدمة تقرأ الفواتير: Claude أو Gemini
+function provider_() {
+  const p = S_('aiProvider');
+  if (p === 'Claude' || p === 'Gemini') return p;
+  return PropertiesService.getScriptProperties().getProperty('claudeKey') ? 'Claude' : 'Gemini';
+}
+// القراءة بـ Claude من Anthropic
+function callClaude_(prompt, b64, mime) {
+  const key = aiKey_('claudeKey');
+  const content = [];
+  if (b64) {
+    const isPdf = /pdf/i.test(mime || '');
+    content.push(isPdf
+      ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }
+      : { type: 'image', source: { type: 'base64', media_type: /png/i.test(mime) ? 'image/png' : 'image/jpeg', data: b64 } });
+  }
+  content.push({ type: 'text', text: prompt });
+  const res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+    payload: JSON.stringify({ model: S_('claudeModel') || DEFAULTS.claudeModel, max_tokens: 1024, temperature: 0, messages: [{ role: 'user', content: content }] })
+  });
+  const code = res.getResponseCode(), txt = res.getContentText();
+  if (code === 200) {
+    const j = JSON.parse(txt);
+    return (j.content || []).filter(function (c) { return c.type === 'text'; }).map(function (c) { return c.text; }).join('');
+  }
+  let msg = ''; try { msg = JSON.parse(txt).error.message; } catch (e) { msg = txt.slice(0, 200); }
+  if (code === 401) throw new Error('مفتاح Claude غير صحيح');
+  if (code === 400 && /credit|balance|billing/i.test(msg)) throw new Error('رصيد حساب Claude لا يكفي — أضف رصيداً من console.anthropic.com');
+  if (code === 404 && /model/i.test(msg)) throw new Error('اسم نموذج Claude غير صحيح في الإعدادات: ' + S_('claudeModel'));
+  if (code === 429) throw new Error('طلبات كثيرة على Claude في وقت واحد، حاول بعد دقيقة');
+  if (code === 529 || code >= 500) throw new Error('خدمة Claude مشغولة الآن، حاول بعد قليل');
+  throw new Error('تعذّرت القراءة بـ Claude (' + code + ': ' + msg + ')');
+}
+function askAi_(prompt, b64, mime) {
+  if (provider_() === 'Claude') return callClaude_(prompt, b64, mime);
+  const parts = [{ text: prompt }];
+  if (b64) parts.push({ inline_data: { mime_type: mime || 'image/jpeg', data: b64 } });
+  return callGemini_(parts);
+}
+function parseJson_(txt) {
+  let t = String(txt || '').replace(/```(json)?/g, '').trim();
+  const a = t.indexOf('{'), b = t.lastIndexOf('}');
+  if (a >= 0 && b > a) t = t.slice(a, b + 1);
+  return JSON.parse(t);
+}
 function callGemini_(parts) {
-  const key = aiKey_();
+  const key = aiKey_('geminiKey');
   const models = [S_('aiModel') || DEFAULTS.aiModel, 'gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash']
     .filter(function (m, i, a) { return m && a.indexOf(m) === i; });
   let lastErr = '';
@@ -786,9 +860,9 @@ function readWithAi_(b64, mime) {
     '- category: اختر واحداً فقط من هذه القائمة يناسب المشتريات: ' + cats.join('، ') + '. إن لم يناسب أيٌّ منها فاتركه فارغاً.',
     '- اكتب الأرقام بالأرقام الإنجليزية. اترك الحقل فارغاً "" إن لم تجده ولا تخمّن.'
   ].join('\n');
-  const txt = callGemini_([{ text: prompt }, { inline_data: { mime_type: mime || 'image/jpeg', data: b64 } }]);
+  const txt = askAi_(prompt + '\nأعد كائن JSON واحداً فقط دون أي شرح.', b64, mime);
   let j;
-  try { j = JSON.parse(String(txt).replace(/^```(json)?|```$/g, '').trim()); } catch (e) { throw new Error('لم تُفهم نتيجة القراءة الآلية'); }
+  try { j = parseJson_(txt); } catch (e) { throw new Error('لم تُفهم نتيجة القراءة الآلية'); }
   if (Array.isArray(j)) j = j[0] || {};
   const kindMap = { tax: KIND.TAX, no_tax: KIND.NOTAX, paper: KIND.PAPER };
   const o = {
@@ -803,7 +877,8 @@ function readWithAi_(b64, mime) {
   return o;
 }
 function testAi_() {
-  const t = callGemini_([{ text: 'أعد JSON: {"ok":true}' }]);
-  return { ok: /true/.test(t), model: S_('aiModel') };
+  const p = provider_();
+  const t = askAi_('أعد هذا JSON كما هو فقط: {"ok":true}');
+  return { ok: /true/.test(t), provider: p, model: p === 'Claude' ? S_('claudeModel') : S_('aiModel') };
 }
 /*CORE-END*/
