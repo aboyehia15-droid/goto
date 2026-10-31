@@ -45,7 +45,8 @@ const INV = [
   ['updated_at', 'وقت آخر تعديل'],
   ['not_dup', 'أُكِّد أنها غير مكررة'],
   ['deleted', 'محذوفة'],
-  ['id', 'المعرّف']
+  ['id', 'المعرّف'],
+  ['ai_error', 'سبب عدم القراءة']
 ];
 const INV_KEYS = INV.map(function (c) { return c[0]; });
 const NUM_KEYS = ['total', 'subtotal', 'vat'];
@@ -229,6 +230,38 @@ function now_() { return Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm:
 function str_(v) {
   if (v instanceof Date) return Utilities.formatDate(v, TZ, 'yyyy-MM-dd');
   return v == null ? '' : String(v);
+}
+// يحوّل أي صيغة تاريخ (أرقام عربية، / أو . ، يوم-شهر-سنة، هجري) إلى سنة-شهر-يوم ميلادي
+function normDate_(v) {
+  let s = String(v == null ? '' : v).trim();
+  if (!s) return '';
+  s = s.replace(/[٠-٩]/g, function (d) { return '٠١٢٣٤٥٦٧٨٩'.indexOf(d); }).replace(/[۰-۹]/g, function (d) { return '۰۱۲۳۴۵۶۷۸۹'.indexOf(d); });
+  let y, m, d, m1 = s.match(/(\d{4})\s*[-\/.]\s*(\d{1,2})\s*[-\/.]\s*(\d{1,2})/), m2 = s.match(/(\d{1,2})\s*[-\/.]\s*(\d{1,2})\s*[-\/.]\s*(\d{4})/);
+  if (m1) { y = +m1[1]; m = +m1[2]; d = +m1[3]; }
+  else if (m2) { y = +m2[3]; m = +m2[2]; d = +m2[1]; if (m > 12 && d <= 12) { const t = m; m = d; d = t; } }
+  else return '';
+  if (m < 1 || m > 12 || d < 1 || d > 31) return '';
+  if (y >= 1300 && y < 1600) return hijriToG_(y, m, d);   // تاريخ هجري
+  if (y < 1900 || y > 2100) return '';
+  return y + '-' + ('0' + m).slice(-2) + '-' + ('0' + d).slice(-2);
+}
+// تحويل هجري إلى ميلادي (التقويم الهجري الحسابي — قد يختلف يوماً عن أم القرى)
+function hijriToG_(y, m, d) {
+  const jd = d + Math.ceil(29.5 * (m - 1)) + (y - 1) * 354 + Math.floor((3 + 11 * y) / 30) + 1948439.5 - 1;
+  let date = new Date((jd - 2440587.5) * 86400000 + 43200000);
+  // تصحيح إلى تقويم أم القرى إن توفّر في الخادم
+  try {
+    const f = new Intl.DateTimeFormat('en-u-ca-islamic-umalqura-nu-latn', { day: 'numeric', month: 'numeric', year: 'numeric', timeZone: 'UTC' });
+    const parts = function (dt) { const o = {}; f.formatToParts(dt).forEach(function (x) { o[x.type] = x.value; }); return [parseInt(o.year, 10), +o.month, +o.day]; };
+    if (parts(date)[0] < 1600) {
+      for (let k = 0; k <= 3; k++) {
+        const hit = [k, -k].map(function (off) { return new Date(date.getTime() + off * 86400000); })
+          .filter(function (dt) { const p = parts(dt); return p[0] === y && p[1] === m && p[2] === d; })[0];
+        if (hit) { date = hit; break; }
+      }
+    }
+  } catch (e) { }
+  return date.getUTCFullYear() + '-' + ('0' + (date.getUTCMonth() + 1)).slice(-2) + '-' + ('0' + date.getUTCDate()).slice(-2);
 }
 function num_(v) {
   if (v === '' || v == null) return '';
@@ -608,7 +641,7 @@ function cleanFields_(src, o) {
     let v = src[k];
     if (NUM_KEYS.indexOf(k) >= 0) v = num_(v);
     else v = String(v == null ? '' : v).trim().slice(0, 1000);
-    if (k === 'date' && v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new Error('التاريخ يجب أن يكون بصيغة سنة-شهر-يوم');
+    if (k === 'date' && v) { const n = normDate_(v); if (!n) throw new Error('التاريخ غير مفهوم: ' + v); v = n; }
     if (k === 'kind' && v && [KIND.TAX, KIND.NOTAX, KIND.PAPER].indexOf(v) < 0) v = KIND.NOTAX;
     o[k] = v;
   });
@@ -675,6 +708,7 @@ function addInvoice_(r, me) {
     o.file_hash = String(r.fileHash || '').slice(0, 80);
     const why = applyDup_(o);
     if (!ai && file && file.data && aiErr) o.status = o.status === STATUS.DUP ? o.status : STATUS.REVIEW;
+    o.ai_error = aiErr ? aiErr.slice(0, 300) : '';
     const saved = file ? saveFile_(file, o.code, o.date) : null;
     if (saved) { o.file_id = saved.id; o.file_url = saved.url; o.mime = saved.mime; }
     o.created_by = me.name; o.created_at = now_();
@@ -747,7 +781,12 @@ function rereadInvoice_(r, me) {
   const x = getInv_(r.id);
   if (!x.file_id) throw new Error('لا توجد صورة لهذه الفاتورة');
   const blob = DriveApp.getFileById(x.file_id).getBlob();
-  const ai = readWithAi_(Utilities.base64Encode(blob.getBytes()), blob.getContentType());
+  let ai;
+  try { ai = readWithAi_(Utilities.base64Encode(blob.getBytes()), blob.getContentType()); }
+  catch (e) {
+    if (r.save) { try { MEMO.inv = null; const z = getInv_(r.id); z.ai_error = String(e.message || e).slice(0, 300); writeInv_(z, z.row); } catch (e2) { } }
+    throw e;
+  }
   if (!r.save) return ai; // تُعرض في نافذة التعديل ليؤكدها المستخدم
   // حفظ مباشر: تُملأ الحقول الفارغة فقط، فلا يُمسّ ما عدّله المستخدم بيده
   const lock = LockService.getScriptLock(); lock.waitLock(30000);
@@ -765,6 +804,7 @@ function rereadInvoice_(r, me) {
     if (fill.kind || fill.total) { if (!('subtotal' in fill)) y.subtotal = ''; if (!('vat' in fill)) y.vat = ''; }
     cleanFields_(fill, y);
     if (fill.category && categories_().indexOf(fill.category) < 0) y.category = '';
+    y.ai_error = '';
     if (y.status !== STATUS.DUP) y.status = '';
     const why = applyDup_(y);
     if (!why) refreshStatus_(y);
@@ -835,6 +875,16 @@ function callClaude_(prompt, b64, mime) {
   if (code === 529 || code >= 500) throw new Error('خدمة Claude مشغولة الآن، حاول بعد قليل');
   throw new Error('تعذّرت القراءة بـ Claude (' + code + ': ' + msg + ')');
 }
+let GEN_CFG_ = null;
+const INV_SCHEMA_ = {
+  type: 'OBJECT',
+  properties: {
+    is_document: { type: 'BOOLEAN' }, kind: { type: 'STRING', enum: ['tax', 'no_tax', 'paper'] },
+    date: { type: 'STRING' }, date_hijri: { type: 'STRING' }, number: { type: 'STRING' }, vendor: { type: 'STRING' }, vat_no: { type: 'STRING' },
+    subtotal: { type: 'NUMBER' }, vat: { type: 'NUMBER' }, total: { type: 'NUMBER' }, description: { type: 'STRING' }, category: { type: 'STRING' }
+  },
+  required: ['kind', 'date', 'total', 'vendor', 'description']
+};
 function askAi_(prompt, b64, mime) {
   if (provider_() === 'Claude') return callClaude_(prompt, b64, mime);
   const parts = [{ text: prompt }];
@@ -862,7 +912,7 @@ function callGemini_(parts) {
         res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(models[i]) + ':generateContent', {
           method: 'post', contentType: 'application/json', muteHttpExceptions: true,
           headers: { 'x-goog-api-key': key },
-          payload: JSON.stringify({ contents: [{ role: 'user', parts: parts }], generationConfig: { temperature: 0, responseMimeType: 'application/json' } })
+          payload: JSON.stringify({ contents: [{ role: 'user', parts: parts }], generationConfig: GEN_CFG_ || { temperature: 0, responseMimeType: 'application/json' } })
         });
       } catch (e) { lastErr = String(e.message || e); continue; }
       const code = res.getResponseCode();
@@ -876,6 +926,7 @@ function callGemini_(parts) {
       }
       lastErr = code + ': ' + (function () { try { return JSON.parse(txt).error.message; } catch (e) { return txt.slice(0, 200); } })();
       if ((code === 400 || code === 403) && /API key|API_KEY|permission/i.test(txt)) throw new Error('مفتاح Gemini غير صحيح أو غير مفعّل');
+      if (code === 400 && GEN_CFG_ && GEN_CFG_.responseSchema) { GEN_CFG_ = { temperature: 0, responseMimeType: 'application/json' }; i--; continue; }
       if (code === 503 || code === 500 || code === 502 || code === 504) { busy = true; Utilities.sleep(1500 + round * 2500); continue; }
       if (code === 429) { quota = true; Utilities.sleep(2000); continue; }
       // 404 أو نموذج غير متاح: ننتقل للنموذج التالي
@@ -901,18 +952,21 @@ function readWithAi_(b64, mime) {
     '- category: اختر واحداً فقط من هذه القائمة يناسب المشتريات: ' + cats.join('، ') + '. إن لم يناسب أيٌّ منها فاتركه فارغاً.',
     '- اكتب الأرقام بالأرقام الإنجليزية. اترك الحقل فارغاً "" إن لم تجده ولا تخمّن.'
   ].join('\n');
-  const txt = askAi_(prompt + '\nأعد كائن JSON واحداً فقط دون أي شرح.', b64, mime);
+  GEN_CFG_ = { temperature: 0, responseMimeType: 'application/json', responseSchema: INV_SCHEMA_ };
+  let txt;
+  try { txt = askAi_(prompt + '\nأعد كائن JSON واحداً فقط دون أي شرح.', b64, mime); } finally { GEN_CFG_ = null; }
   let j;
   try { j = parseJson_(txt); } catch (e) { throw new Error('لم تُفهم نتيجة القراءة الآلية'); }
   if (Array.isArray(j)) j = j[0] || {};
   const kindMap = { tax: KIND.TAX, no_tax: KIND.NOTAX, paper: KIND.PAPER };
   const o = {
     kind: kindMap[j.kind] || '',
-    date: /^\d{4}-\d{2}-\d{2}$/.test(String(j.date || '')) ? j.date : '',
+    date: normDate_(j.date) || normDate_(j.date_hijri),
     number: String(j.number || ''), vendor: String(j.vendor || ''), vat_no: String(j.vat_no || '').replace(/\s/g, ''),
     subtotal: num_(j.subtotal), vat: num_(j.vat), total: num_(j.total),
     description: String(j.description || ''), category: cats.indexOf(String(j.category || '')) >= 0 ? j.category : ''
   };
+  if (!o.total && (o.subtotal || o.vat)) o.total = Math.round(((Number(o.subtotal) || 0) + (Number(o.vat) || 0)) * 100) / 100;
   if (j.date_hijri) o.notes = 'التاريخ الهجري: ' + j.date_hijri;
   if (j.is_document === false) o.notes = (o.notes ? o.notes + ' — ' : '') + 'قد لا يكون المستند فاتورة';
   return o;
