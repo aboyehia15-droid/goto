@@ -860,7 +860,7 @@ function callClaude_(prompt, b64, mime) {
   const res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
     method: 'post', contentType: 'application/json', muteHttpExceptions: true,
     headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-    payload: JSON.stringify({ model: S_('claudeModel') || DEFAULTS.claudeModel, max_tokens: 1024, temperature: 0, messages: [{ role: 'user', content: content }] })
+    payload: JSON.stringify({ model: S_('claudeModel') || DEFAULTS.claudeModel, max_tokens: 1024, messages: [{ role: 'user', content: content }] })
   });
   const code = res.getResponseCode(), txt = res.getContentText();
   if (code === 200) {
