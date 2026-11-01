@@ -16,7 +16,7 @@ const LOCK_SECONDS = 900;        // مدة القفل 15 دقيقة
 const FOLDER_NAME = 'مصروفات مجمع ابن تيمية - صور الفواتير';
 
 const KIND = { TAX: 'ضريبية', NOTAX: 'بدون ضريبة', PAPER: 'ورقة مكتوبة' };
-const STATUS = { OK: 'سليمة', DUP: 'مكررة', REVIEW: 'تحتاج مراجعة' };
+const STATUS = { OK: 'سليمة', DUP: 'مكررة', REVIEW: 'تحتاج مراجعة', ATT: 'مرفق' };
 
 // أعمدة ورقة الفواتير — الأعمدة الثمانية الأولى بترتيب الكشف المعتمد
 const INV = [
@@ -46,11 +46,13 @@ const INV = [
   ['not_dup', 'أُكِّد أنها غير مكررة'],
   ['deleted', 'محذوفة'],
   ['id', 'المعرّف'],
-  ['ai_error', 'سبب عدم القراءة']
+  ['ai_error', 'سبب عدم القراءة'],
+  ['dup_of_id', 'معرّف الأصل (للمكررة)'],
+  ['attach_to', 'مرفق للفاتورة (المعرّف)']
 ];
 const INV_KEYS = INV.map(function (c) { return c[0]; });
 const NUM_KEYS = ['total', 'subtotal', 'vat'];
-const EDITABLE = ['total', 'category', 'description', 'vendor', 'number', 'date', 'code', 'subtotal', 'vat', 'vat_no', 'kind', 'notes'];
+const EDITABLE = ['total', 'category', 'description', 'vendor', 'number', 'date', 'subtotal', 'vat', 'vat_no', 'kind', 'notes'];
 
 const USERS_COLS = ['المعرّف', 'الاسم', 'اسم الدخول', 'كلمة المرور (مشفّرة)', 'الحالة', 'مدير', 'إضافة', 'تعديل', 'حذف', 'الكشوف', 'وقت الطلب', 'وافق عليه', 'وقت الموافقة', 'آخر دخول'];
 const PERMS = ['admin', 'add', 'edit', 'delete', 'reports'];
@@ -73,9 +75,12 @@ const DEFAULTS = {
   vatRate: '15',
   currency: 'ريال',
   codePrefix: '',
+  codeYear: 'ميلادي',               // سنة الرمز: ميلادي أو هجري
+  numberingV: '',
   aiEnabled: 'نعم',
   aiProvider: 'تلقائي',            // تلقائي = Claude إن وُجد مفتاحه، وإلا Gemini
   claudeModel: 'claude-sonnet-5-5',
+  claudeDeepModel: 'claude-opus-5-5',   // نموذج أقوى يُستخدم فقط للفواتير الصعبة
   aiModel: 'gemini-flash-latest',
   dupHash: 'نعم',
   dupNumber: 'نعم',
@@ -152,6 +157,7 @@ const ROUTES = {
   update: { perm: 'edit', fn: updateInvoice_ },
   reread: { perm: 'edit', fn: rereadInvoice_ },
   setNotDup: { perm: 'edit', fn: setNotDup_ },
+  setAttach: { perm: 'edit', fn: setAttach_ },
   remove: { perm: 'delete', fn: removeInvoice_ },
   history: { fn: invoiceHistory_ },
   fileData: { fn: fileData_ },
@@ -553,6 +559,11 @@ function invoices_() {
 }
 function clientInv_(x) { const o = {}; Object.keys(x).forEach(function (k) { if (k !== 'row') o[k] = x[k]; }); return o; }
 function listInvoices_() {
+  const pendingAtt = invoices_().some(function (x) { return x.deleted !== 'نعم' && x.status === STATUS.DUP && !x.attach_to && /مرفق/.test(x.notes || ''); });
+  if (S_('numberingV') !== '2' || pendingAtt) {
+    const lock = LockService.getScriptLock(); lock.waitLock(30000);
+    try { migrateAttachments_(); reorder_(); setSetting_('numberingV', '2'); } finally { lock.releaseLock(); }
+  }
   return invoices_().filter(function (x) { return x.deleted !== 'نعم'; }).map(clientInv_);
 }
 function thumbUrl_(id) { return id ? 'https://drive.google.com/thumbnail?id=' + id + '&sz=w1000' : ''; }
@@ -584,6 +595,94 @@ function sortInvSheet_() {
     MEMO.inv = null;
   } catch (e) { console.warn('sort: ' + e); }
 }
+// سنة الفاتورة للرمز (ميلادية أو هجرية حسب الإعداد)
+function codeYear_(date) {
+  const y = Number(String(date).slice(0, 4));
+  if (S_('codeYear') !== 'هجري') return y;
+  try {
+    const f = new Intl.DateTimeFormat('en-u-ca-islamic-umalqura-nu-latn', { year: 'numeric', timeZone: 'UTC' });
+    const h = parseInt(f.format(new Date(date + 'T12:00:00Z')), 10);
+    if (h > 1300 && h < 1600) return h;
+  } catch (e) { }
+  const g = new Date(date + 'T12:00:00Z'), jd = g.getTime() / 86400000 + 2440587.5;
+  return Math.floor((30 * (Math.floor(jd - 0.5) + 0.5 - 1948439.5) + 10646) / 10631);
+}
+// يرتب الفواتير حسب التاريخ ويعيد ترقيمها: الرمز = التسلسل/السنة، والتسلسل يبدأ من 1 في كل سنة.
+// المكررة لا تأخذ رقماً، والمرفق يأخذ رمز فاتورته الأصلية.
+function reorder_() {
+  sortInvSheet_();
+  const sh = sheet_('inv'), n = sh.getLastRow() - 1;
+  if (n < 1) return;
+  const list = invoices_();
+  const byId = {}; list.forEach(function (x) { byId[x.id] = x; });
+  const seq = {}, codes = {};
+  list.forEach(function (x) {
+    if (x.deleted === 'نعم' || x.status === STATUS.DUP || x.attach_to) return;
+    if (!x.date) return;
+    const y = codeYear_(x.date);
+    seq[y] = (seq[y] || 0) + 1;
+    codes[x.id] = seq[y] + '/' + y;
+  });
+  let undated = 0;
+  list.forEach(function (x) {
+    if (x.deleted === 'نعم' || x.status === STATUS.DUP || x.attach_to || x.date) return;
+    codes[x.id] = 'بلا تاريخ ' + (++undated);
+  });
+  const cCode = INV_KEYS.indexOf('code') + 1, cDup = INV_KEYS.indexOf('dup_of') + 1;
+  const codeCol = [], dupCol = [];
+  list.forEach(function (x) {
+    let c = codes[x.id] || '';
+    if (x.attach_to) c = byId[x.attach_to] && codes[x.attach_to] ? 'مرفق ' + codes[x.attach_to] : 'مرفق';
+    let d = x.dup_of;
+    if (x.status === STATUS.DUP && x.dup_of_id && byId[x.dup_of_id]) d = codes[x.dup_of_id] || byId[x.dup_of_id].code;
+    if (x.deleted === 'نعم') c = x.code;
+    codeCol[x.row - 2] = [c]; dupCol[x.row - 2] = [d || ''];
+  });
+  for (let i = 0; i < n; i++) { if (!codeCol[i]) codeCol[i] = [sh.getRange(i + 2, cCode).getValue()]; if (!dupCol[i]) dupCol[i] = [sh.getRange(i + 2, cDup).getValue()]; }
+  sh.getRange(2, cCode, n, 1).setNumberFormat('@').setValues(codeCol);
+  sh.getRange(2, cDup, n, 1).setNumberFormat('@').setValues(dupCol);
+  MEMO.inv = null;
+}
+// مرة واحدة: الفواتير المعلَّمة مكررة وفي ملاحظاتها «مرفق» تُحوَّل إلى مرفق للفاتورة الأصلية
+function migrateAttachments_() {
+  const list = invoices_();
+  list.forEach(function (x) {
+    if (x.deleted === 'نعم' || x.status !== STATUS.DUP || x.attach_to || !/مرفق/.test(x.notes || '')) return;
+    const p = list.filter(function (y) { return y.id !== x.id && y.deleted !== 'نعم' && (y.id === x.dup_of_id || y.code === x.dup_of); })[0];
+    if (!p) return;
+    makeAttachment_(x, p);
+    writeInv_(x, x.row);
+    log_(null, 'تحويل إلى مرفق', x.code, x.id, 'مرفق للفاتورة ' + p.code + ' (حسب الملاحظات)');
+  });
+  MEMO.inv = null;
+}
+function makeAttachment_(x, parent) {
+  x.attach_to = parent.id; x.status = STATUS.ATT; x.dup_of = ''; x.dup_of_id = '';
+  x.total = 0; x.subtotal = 0; x.vat = 0;
+}
+// يجعل الفاتورة مرفقاً لفاتورة أخرى (بدون مبلغ ولا رقم مستقل)، أو يلغي ذلك
+function setAttach_(r, me) {
+  const lock = LockService.getScriptLock(); lock.waitLock(30000);
+  try {
+    MEMO.inv = null;
+    const x = getInv_(r.id);
+    if (r.parentId) {
+      const p = getInv_(r.parentId);
+      if (p.id === x.id) throw new Error('لا يمكن أن تكون الفاتورة مرفقاً لنفسها');
+      if (p.attach_to) throw new Error('الفاتورة المختارة هي نفسها مرفق، اختر الفاتورة الأصلية');
+      makeAttachment_(x, p);
+      log_(me, 'جعلها مرفقاً', x.code, x.id, 'مرفق للفاتورة ' + p.code);
+    } else {
+      x.attach_to = ''; x.status = ''; x.not_dup = 'نعم';
+      applyDup_(x);
+      log_(me, 'إلغاء المرفق', x.code, x.id, 'أصبحت فاتورة مستقلة — أدخل مبلغها');
+    }
+    x.updated_by = me.name; x.updated_at = now_();
+    writeInv_(x, x.row);
+    reorder_();
+    return clientInv_(getInv_(x.id));
+  } finally { lock.releaseLock(); }
+}
 function nextCode_() {
   const prefix = S_('codePrefix');
   let max = 0;
@@ -606,7 +705,7 @@ function older_(a, b) {
 function findDup_(o) {
   if (o.not_dup === 'نعم') return null;
   // الأصل دائماً هو الأقدم إدخالاً، فلا تُعلَّم فاتورة قديمة مكررةً من فاتورة أحدث منها
-  const list = invoices_().filter(function (x) { return x.deleted !== 'نعم' && x.id !== o.id && x.status !== STATUS.DUP && older_(x, o); });
+  const list = invoices_().filter(function (x) { return x.deleted !== 'نعم' && x.id !== o.id && x.status !== STATUS.DUP && !x.attach_to && older_(x, o); });
   const num = normNum_(o.number), vat = normNum_(o.vat_no), total = Number(o.total), vend = normName_(o.vendor);
   for (let i = 0; i < list.length; i++) {
     const x = list[i];
@@ -623,16 +722,17 @@ function findDup_(o) {
   return null;
 }
 function applyDup_(o) {
+  if (o.attach_to) { o.status = STATUS.ATT; o.dup_of = ''; o.dup_of_id = ''; return ''; }
   const d = findDup_(o);
-  if (d) { o.status = STATUS.DUP; o.dup_of = d.inv.code; return d.why; }
-  if (o.status === STATUS.DUP) o.status = '';
-  o.dup_of = '';
+  if (d) { o.status = STATUS.DUP; o.dup_of = d.inv.code; o.dup_of_id = d.inv.id; return d.why; }
+  if (o.status === STATUS.DUP || o.status === STATUS.ATT) o.status = '';
+  o.dup_of = ''; o.dup_of_id = '';
   if (!o.status) o.status = needsReview_(o) ? STATUS.REVIEW : STATUS.OK;
   return '';
 }
 function needsReview_(o) { return !(Number(o.total) > 0) || !o.date; }
 function refreshStatus_(o) {
-  if (o.status === STATUS.DUP) return;
+  if (o.status === STATUS.DUP || o.attach_to) return;
   o.status = needsReview_(o) ? STATUS.REVIEW : STATUS.OK;
 }
 function cleanFields_(src, o) {
@@ -704,17 +804,18 @@ function addInvoice_(r, me) {
     if (!base.kind) base.kind = (Number(num_(base.vat)) > 0 || base.vat_no) ? KIND.TAX : KIND.NOTAX;
     cleanFields_(base, o);
     if (o.category && categories_().indexOf(o.category) < 0) { o.notes = (o.notes ? o.notes + ' — ' : '') + 'تصنيف مقترح: ' + o.category; o.category = ''; }
-    o.code = String(manual.code || '').trim() || nextCode_();
+    o.code = '';
     o.file_hash = String(r.fileHash || '').slice(0, 80);
     const why = applyDup_(o);
     if (!ai && file && file.data && aiErr) o.status = o.status === STATUS.DUP ? o.status : STATUS.REVIEW;
     o.ai_error = aiErr ? aiErr.slice(0, 300) : '';
-    const saved = file ? saveFile_(file, o.code, o.date) : null;
+    const saved = file ? saveFile_(file, o.id, o.date) : null;
     if (saved) { o.file_id = saved.id; o.file_url = saved.url; o.mime = saved.mime; }
     o.created_by = me.name; o.created_at = now_();
     o.deleted = ''; o.not_dup = '';
     writeInv_(o);
-    sortInvSheet_();
+    reorder_();
+    o.code = (getInv_(o.id) || {}).code || '';
     log_(me, file ? 'رفع فاتورة' : 'إدخال يدوي', o.code, o.id, [o.vendor, o.total, o.kind, why ? 'مكررة: ' + why + ' (' + o.dup_of + ')' : ''].filter(String).join(' | '));
     const res = clientInv_(o);
     res._dupReason = why; res._aiError = aiErr; res._ai = !!ai;
@@ -735,15 +836,21 @@ function updateInvoice_(r, me) {
     cleanFields_(r.data || {}, x);
     if (x.kind !== KIND.TAX && before.kind === KIND.TAX && !('vat' in (r.data || {}))) { x.vat = 0; x.subtotal = x.total; }
     if (r.file && r.file.data) {
-      const saved = saveFile_(r.file, x.code, x.date);
+      const saved = saveFile_(r.file, x.id, x.date);
       x.file_id = saved.id; x.file_url = saved.url; x.mime = saved.mime; x.file_hash = String(r.fileHash || '');
     }
-    if (x.status !== STATUS.DUP) x.status = '';
+    // ملاحظة «مرفق» على فاتورة مكررة: تتحول إلى مرفق لأصلها
+    if (x.status === STATUS.DUP && !x.attach_to && /مرفق/.test(x.notes || '')) {
+      const p = invoices_().filter(function (y) { return y.id !== x.id && y.deleted !== 'نعم' && (y.id === x.dup_of_id || y.code === x.dup_of); })[0];
+      if (p) makeAttachment_(x, p);
+    }
+    if (x.attach_to) { x.total = 0; x.subtotal = 0; x.vat = 0; }
+    if (x.status !== STATUS.DUP && !x.attach_to) x.status = '';
     const why = applyDup_(x);
     if (!why) refreshStatus_(x);
     x.updated_by = me.name; x.updated_at = now_();
     writeInv_(x, x.row);
-    if (before.date !== x.date) sortInvSheet_();
+    if (before.date !== x.date || before.status !== x.status) { reorder_(); x.code = getInv_(x.id).code; x.dup_of = getInv_(x.id).dup_of; }
     const diff = EDITABLE.filter(function (k) { return String(before[k]) !== String(x[k]); }).map(function (k) { return colName_(k) + ': ' + before[k] + ' ← ' + x[k]; });
     if (r.file && r.file.data) diff.push('استبدال صورة الفاتورة');
     log_(me, 'تعديل فاتورة', x.code, x.id, diff.join(' | ') + (why ? ' | مكررة: ' + why : ''));
@@ -760,10 +867,12 @@ function setNotDup_(r, me) {
     x.not_dup = r.value === false ? '' : 'نعم';
     x.status = '';
     const why = applyDup_(x);
+    refreshStatus_(x);
     x.updated_by = me.name; x.updated_at = now_();
     writeInv_(x, x.row);
+    reorder_();
     log_(me, x.not_dup ? 'تأكيد أنها غير مكررة' : 'إلغاء تأكيد عدم التكرار', x.code, x.id, why);
-    return clientInv_(x);
+    return clientInv_(getInv_(x.id));
   } finally { lock.releaseLock(); }
 }
 function removeInvoice_(r, me) {
@@ -773,6 +882,9 @@ function removeInvoice_(r, me) {
     const x = getInv_(r.id);
     x.deleted = 'نعم'; x.updated_by = me.name; x.updated_at = now_();
     writeInv_(x, x.row);
+    // مرفقات الفاتورة المحذوفة تُحذف معها
+    invoices_().filter(function (a) { return a.attach_to === x.id && a.deleted !== 'نعم'; }).forEach(function (a) { a.deleted = 'نعم'; a.updated_by = me.name; a.updated_at = now_(); writeInv_(a, a.row); });
+    reorder_();
     log_(me, 'حذف فاتورة', x.code, x.id, [x.vendor, x.total, x.date].join(' | '));
     return true;
   } finally { lock.releaseLock(); }
@@ -782,7 +894,8 @@ function rereadInvoice_(r, me) {
   if (!x.file_id) throw new Error('لا توجد صورة لهذه الفاتورة');
   const blob = DriveApp.getFileById(x.file_id).getBlob();
   let ai;
-  try { ai = readWithAi_(Utilities.base64Encode(blob.getBytes()), blob.getContentType()); }
+  const extras = (r.extras || []).slice(0, 4).filter(function (e) { return e && e.data && String(e.data).length < 6000000; });
+  try { ai = readWithAi_(Utilities.base64Encode(blob.getBytes()), blob.getContentType(), extras); }
   catch (e) {
     if (r.save) { try { MEMO.inv = null; const z = getInv_(r.id); z.ai_error = String(e.message || e).slice(0, 300); writeInv_(z, z.row); } catch (e2) { } }
     throw e;
@@ -810,9 +923,10 @@ function rereadInvoice_(r, me) {
     if (!why) refreshStatus_(y);
     y.updated_by = me.name; y.updated_at = now_();
     writeInv_(y, y.row);
-    if (before.date !== y.date) sortInvSheet_();
+    if (y.attach_to) { y.total = 0; y.subtotal = 0; y.vat = 0; }
+    if (before.date !== y.date || before.status !== y.status) reorder_();
     log_(me, 'إعادة القراءة الآلية', y.code, y.id, Object.keys(fill).map(function (k) { return colName_(k) + ': ' + y[k]; }).join(' | ') + (why ? ' | مكررة: ' + why : ''));
-    const res = clientInv_(y); res._dupReason = why;
+    const res = clientInv_(getInv_(y.id)); res._dupReason = why;
     return res;
   } finally { lock.releaseLock(); }
 }
@@ -847,20 +961,21 @@ function provider_() {
   return PropertiesService.getScriptProperties().getProperty('claudeKey') ? 'Claude' : 'Gemini';
 }
 // القراءة بـ Claude من Anthropic
-function callClaude_(prompt, b64, mime) {
+function callClaude_(prompt, b64, mime, extras, model) {
   const key = aiKey_('claudeKey');
   const content = [];
-  if (b64) {
-    const isPdf = /pdf/i.test(mime || '');
-    content.push(isPdf
-      ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }
-      : { type: 'image', source: { type: 'base64', media_type: /png/i.test(mime) ? 'image/png' : 'image/jpeg', data: b64 } });
-  }
+  const pushImg = function (data, mt) {
+    content.push(/pdf/i.test(mt || '')
+      ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: data } }
+      : { type: 'image', source: { type: 'base64', media_type: /png/i.test(mt) ? 'image/png' : 'image/jpeg', data: data } });
+  };
+  if (b64) pushImg(b64, mime);
+  (extras || []).forEach(function (e) { if (e && e.data) pushImg(e.data, e.mime); });
   content.push({ type: 'text', text: prompt });
   const res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
     method: 'post', contentType: 'application/json', muteHttpExceptions: true,
     headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-    payload: JSON.stringify({ model: S_('claudeModel') || DEFAULTS.claudeModel, max_tokens: 1024, messages: [{ role: 'user', content: content }] })
+    payload: JSON.stringify({ model: model || S_('claudeModel') || DEFAULTS.claudeModel, max_tokens: 1500, messages: [{ role: 'user', content: content }] })
   });
   const code = res.getResponseCode(), txt = res.getContentText();
   if (code === 200) {
@@ -870,7 +985,7 @@ function callClaude_(prompt, b64, mime) {
   let msg = ''; try { msg = JSON.parse(txt).error.message; } catch (e) { msg = txt.slice(0, 200); }
   if (code === 401) throw new Error('مفتاح Claude غير صحيح');
   if (code === 400 && /credit|balance|billing/i.test(msg)) throw new Error('رصيد حساب Claude لا يكفي — أضف رصيداً من console.anthropic.com');
-  if (code === 404 && /model/i.test(msg)) throw new Error('اسم نموذج Claude غير صحيح في الإعدادات: ' + S_('claudeModel'));
+  if (code === 404 && /model/i.test(msg)) throw new Error('اسم نموذج Claude غير صحيح في الإعدادات: ' + (model || S_('claudeModel')));
   if (code === 429) throw new Error('طلبات كثيرة على Claude في وقت واحد، حاول بعد دقيقة');
   if (code === 529 || code >= 500) throw new Error('خدمة Claude مشغولة الآن، حاول بعد قليل');
   throw new Error('تعذّرت القراءة بـ Claude (' + code + ': ' + msg + ')');
@@ -885,10 +1000,17 @@ const INV_SCHEMA_ = {
   },
   required: ['kind', 'date', 'total', 'vendor', 'description']
 };
-function askAi_(prompt, b64, mime) {
-  if (provider_() === 'Claude') return callClaude_(prompt, b64, mime);
+function askAi_(prompt, b64, mime, extras, deep) {
+  if (provider_() === 'Claude') {
+    if (deep && S_('claudeDeepModel')) {
+      try { return callClaude_(prompt, b64, mime, extras, S_('claudeDeepModel')); }
+      catch (e) { if (/نموذج Claude غير صحيح/.test(String(e.message))) return callClaude_(prompt, b64, mime, extras); throw e; }
+    }
+    return callClaude_(prompt, b64, mime, extras);
+  }
   const parts = [{ text: prompt }];
   if (b64) parts.push({ inline_data: { mime_type: mime || 'image/jpeg', data: b64 } });
+  (extras || []).forEach(function (e) { if (e && e.data) parts.push({ inline_data: { mime_type: e.mime || 'image/jpeg', data: e.data } }); });
   return callGemini_(parts);
 }
 function parseJson_(txt) {
@@ -938,7 +1060,22 @@ function callGemini_(parts) {
   if (quota) throw new Error('تجاوزت حد Gemini المجاني مؤقتاً — أعد القراءة بعد دقيقة');
   throw new Error('تعذّرت القراءة الآلية (' + lastErr + ')');
 }
-function readWithAi_(b64, mime) {
+// القراءة على مراحل: عادية، ثم «قراءة متأنية» بنموذج أقوى وتعليمات أدق، ومع مقاطع مكبّرة من الصورة إن أُرسلت
+function readWithAi_(b64, mime, extras) {
+  let first = null, err1 = null;
+  if (!extras || !extras.length) {
+    try { first = readOnce_(b64, mime, null, false); } catch (e) { err1 = e; if (/مفتاح|رصيد|غير صحيح/.test(String(e.message))) throw e; }
+    if (first && first.total && first.date) return first;
+  }
+  let second = null;
+  try { second = readOnce_(b64, mime, extras, true); }
+  catch (e) { if (first) return first; throw err1 || e; }
+  if (!first) return second;
+  // دمج: نأخذ من القراءة المتأنية ما نقص من الأولى
+  Object.keys(second).forEach(function (k) { if ((first[k] === '' || first[k] == null || first[k] === 0) && second[k] !== '' && second[k] != null) first[k] = second[k]; });
+  return first;
+}
+function readOnce_(b64, mime, extras, deep) {
   const cats = categories_();
   const prompt = [
     'أنت محاسب سعودي. استخرج بيانات هذا المستند (فاتورة أو إيصال أو ورقة مكتوبة باليد) وأعد JSON فقط بهذه المفاتيح:',
@@ -955,7 +1092,16 @@ function readWithAi_(b64, mime) {
   ].join('\n');
   GEN_CFG_ = { temperature: 0, responseMimeType: 'application/json', responseSchema: INV_SCHEMA_ };
   let txt;
-  try { txt = askAi_(prompt + '\nأعد كائن JSON واحداً فقط دون أي شرح.', b64, mime); } finally { GEN_CFG_ = null; }
+  const deepNote = deep ? [
+    '', 'قراءة متأنية: هذا المستند لم يُقرأ في المحاولة الأولى، فاقرأه بعناية شديدة.',
+    extras && extras.length ? '- الصورة الأولى هي المستند كاملاً، والصور التالية مقاطع مكبّرة ومحسّنة الوضوح من المستند نفسه (أعلى، وسط، أسفل). استخدمها لقراءة الأرقام والكلمات الصغيرة. لا تعتبرها فواتير مختلفة.' : '',
+    '- قد تكون الصورة مائلة أو مقلوبة أو باهتة أو مصوّرة من شاشة أو مكتوبة بخط اليد بالعربية. اقرأ الأرقام العربية (٠١٢٣٤٥٦٧٨٩) والهندية بعناية.',
+    '- ابحث عن الإجمالي في: الإجمالي، المجموع، الصافي، المبلغ المستحق، الإجمالي شامل الضريبة، Total، Grand Total، Net، Amount Due. وإن وُجد في ورقة مكتوبة باليد مبلغ واحد فهو الإجمالي.',
+    '- إن كانت هناك عدة مبالغ فالإجمالي هو آخرها وأكبرها عادة في أسفل الفاتورة.',
+    '- التاريخ قد يكون بصيغة يوم/شهر/سنة، أو هجرياً (سنة 14xx)، أو مكتوباً بالكلمات. حوّله إلى YYYY-MM-DD ميلادي، وضع الهجري الأصلي في date_hijri.',
+    '- إن لم تجد اسم المورد فاكتب ما يدل عليه (مثل اسم المحل في الختم أو الشعار).'
+  ].filter(String).join('\n') : '';
+  try { txt = askAi_(prompt + deepNote + '\nأعد كائن JSON واحداً فقط دون أي شرح.', b64, mime, extras, deep); } finally { GEN_CFG_ = null; }
   let j;
   try { j = parseJson_(txt); } catch (e) { throw new Error('لم تُفهم نتيجة القراءة الآلية'); }
   if (Array.isArray(j)) j = j[0] || {};
