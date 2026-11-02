@@ -49,7 +49,7 @@ const INV = [
   ['ai_error', 'سبب عدم القراءة'],
   ['dup_of_id', 'معرّف الأصل (للمكررة)'],
   ['attach_to', 'مرفق للفاتورة (المعرّف)'],
-  ['taalum', 'مكتوب عليها جمعية تعلم']   // نعم / لا / فارغ = لم تُفحص
+  ['taalum', 'مكتوب عليها جمعية تعلم أو المركز الخيري']   // نعم / لا / فارغ = لم تُفحص
 ];
 const INV_KEYS = INV.map(function (c) { return c[0]; });
 const NUM_KEYS = ['total', 'subtotal', 'vat'];
@@ -78,6 +78,7 @@ const DEFAULTS = {
   codePrefix: '',
   codeYear: 'ميلادي',               // سنة الرمز: ميلادي أو هجري
   numberingV: '',
+  taalumV: '',
   aiEnabled: 'نعم',
   aiProvider: 'تلقائي',            // تلقائي = Claude إن وُجد مفتاحه، وإلا Gemini
   claudeModel: 'claude-sonnet-5-5',
@@ -566,7 +567,24 @@ function listInvoices_() {
     const lock = LockService.getScriptLock(); lock.waitLock(30000);
     try { migrateAttachments_(); reorder_(); setSetting_('numberingV', '2'); } finally { lock.releaseLock(); }
   }
+  if (S_('taalumV') !== '2') {
+    const lock2 = LockService.getScriptLock(); lock2.waitLock(30000);
+    try { if (S_('taalumV') !== '2') { migrateTaalum_(); setSetting_('taalumV', '2'); } } finally { lock2.releaseLock(); }
+  }
   return invoices_().filter(function (x) { return x.deleted !== 'نعم'; }).map(clientInv_);
+}
+// مرة واحدة: الفواتير التي قيل آلياً إن اسم جمعية تعلم ليس عليها تعود «لم تُفحص» لأن المركز الخيري صار مشمولاً.
+// ما حدّده مستخدم بيده (ظاهر في السجل) لا يُمسّ.
+function migrateTaalum_() {
+  const manual = {};
+  readAll_('log').forEach(function (l) { if (str_(l[2]) === 'تعديل فاتورة' && /مكتوب عليها جمعية تعلم/.test(str_(l[5]))) manual[str_(l[4])] = true; });
+  const sh = sheet_('inv'), n = sh.getLastRow() - 1;
+  if (n < 1) return;
+  const col = sh.getRange(2, INV_KEYS.indexOf('taalum') + 1, n, 1), vals = col.getValues();
+  let cleared = 0;
+  invoices_().forEach(function (x) { if (x.taalum === 'لا' && !manual[x.id]) { vals[x.row - 2][0] = ''; cleared++; } });
+  if (cleared) { col.setValues(vals); log_(null, 'إعادة فحص الجهة', '', '', 'أُعيدت ' + cleared + ' فاتورة إلى «لم تُفحص» بعد إضافة المركز الخيري'); }
+  MEMO.inv = null;
 }
 function thumbUrl_(id) { return id ? 'https://drive.google.com/thumbnail?id=' + id + '&sz=w1000' : ''; }
 function writeInv_(o, row) {
@@ -933,7 +951,7 @@ function rereadInvoice_(r, me) {
     return res;
   } finally { lock.releaseLock(); }
 }
-// يفحص صورة فاتورة قديمة: هل مكتوب عليها «جمعية تعلم»؟ لا يغيّر أي بيان آخر فيها.
+// يفحص صورة فاتورة قديمة: هل مكتوب عليها «جمعية تعلم» أو «المركز الخيري لتعليم القرآن وعلومه»؟ لا يغيّر أي بيان آخر فيها.
 // إن لم تتضح الصورة يعيد unclear فترسل الواجهة مقاطع مكبّرة، وتُقرأ حينها بالنموذج الأقوى.
 function checkTaalum_(r, me) {
   const x = getInv_(r.id);
@@ -942,9 +960,9 @@ function checkTaalum_(r, me) {
   const blob = DriveApp.getFileById(x.file_id).getBlob();
   const extras = (r.extras || []).slice(0, 4).filter(function (e) { return e && e.data && String(e.data).length < 6000000; });
   const prompt = [
-    'انظر في هذا المستند كاملاً: هل مكتوب عليه اسم «جمعية تعلم» (أو «جمعية تعلّم للقرآن وعلومه»)؟',
+    'انظر في هذا المستند كاملاً: هل مكتوب عليه اسم «جمعية تعلم» (أو «جمعية تعلّم للقرآن وعلومه») أو اسم «المركز الخيري لتعليم القرآن وعلومه» (ولو باختلاف يسير مثل «المركز الخيري لتعليم القرآن الكريم وعلومه»)؟',
     'الاسم قد يكون في خانة العميل أو المشتري أو «المطلوب من» أو «السادة» أو «اسم الشركة»، وقد يكون مطبوعاً أو في ختم أو مكتوباً بخط اليد.',
-    'لا تعتبر كلمة «تعلم» وحدها في سياق آخر، ولا اسم جهة أخرى، دليلاً على ذلك.',
+    'لا تعتبر كلمة «تعلم» أو «مركز» وحدها في سياق آخر، ولا اسم جهة أخرى، دليلاً على ذلك.',
     extras.length ? 'الصورة الأولى هي المستند كاملاً، والصور التالية مقاطع مكبّرة منه وليست مستندات أخرى.' : '',
     'أعد JSON فقط: {"taalum":true/false, "found":"النص كما هو مكتوب إن وجد", "readable":true/false}',
     'readable = false فقط إذا كانت الصورة غير واضحة بحيث لا يمكنك الجزم بعدم وجود الاسم.'
@@ -1124,7 +1142,7 @@ function readOnce_(b64, mime, extras, deep) {
     '- المبالغ أرقام بلا عملة. total هو المبلغ النهائي المدفوع شامل الضريبة. إن لم تُذكر الضريبة فاجعل vat = 0 و subtotal = total.',
     '- description: بيان صرف عربي مختصر (3 إلى 8 كلمات) يصف ما تم شراؤه أو صرفه.',
     '- category: اختر واحداً فقط من هذه القائمة يناسب المشتريات: ' + cats.join('، ') + '. إن لم يناسب أيٌّ منها فاتركه فارغاً.',
-    '- taalum = true إذا كان مكتوباً في أي مكان من المستند اسم «جمعية تعلم» أو «جمعية تعلّم للقرآن وعلومه» (في خانة العميل أو المشتري أو «المطلوب من» أو «السادة»، مطبوعاً أو في ختم أو بخط اليد)، وإلا false. كلمة «تعلم» وحدها في سياق آخر لا تكفي.',
+    '- taalum = true إذا كان مكتوباً في أي مكان من المستند اسم «جمعية تعلم» أو «جمعية تعلّم للقرآن وعلومه» أو «المركز الخيري لتعليم القرآن وعلومه» ولو باختلاف يسير (في خانة العميل أو المشتري أو «المطلوب من» أو «السادة»، مطبوعاً أو في ختم أو بخط اليد)، وإلا false. كلمة «تعلم» أو «مركز» وحدها في سياق آخر لا تكفي.',
     '- اكتب الأرقام بالأرقام الإنجليزية. اترك الحقل فارغاً "" إن لم تجده ولا تخمّن.'
   ].join('\n');
   GEN_CFG_ = { temperature: 0, responseMimeType: 'application/json', responseSchema: INV_SCHEMA_ };
