@@ -48,11 +48,12 @@ const INV = [
   ['id', 'المعرّف'],
   ['ai_error', 'سبب عدم القراءة'],
   ['dup_of_id', 'معرّف الأصل (للمكررة)'],
-  ['attach_to', 'مرفق للفاتورة (المعرّف)']
+  ['attach_to', 'مرفق للفاتورة (المعرّف)'],
+  ['taalum', 'مكتوب عليها جمعية تعلم']   // نعم / لا / فارغ = لم تُفحص
 ];
 const INV_KEYS = INV.map(function (c) { return c[0]; });
 const NUM_KEYS = ['total', 'subtotal', 'vat'];
-const EDITABLE = ['total', 'category', 'description', 'vendor', 'number', 'date', 'subtotal', 'vat', 'vat_no', 'kind', 'notes'];
+const EDITABLE = ['total', 'category', 'description', 'vendor', 'number', 'date', 'subtotal', 'vat', 'vat_no', 'kind', 'notes', 'taalum'];
 
 const USERS_COLS = ['المعرّف', 'الاسم', 'اسم الدخول', 'كلمة المرور (مشفّرة)', 'الحالة', 'مدير', 'إضافة', 'تعديل', 'حذف', 'الكشوف', 'وقت الطلب', 'وافق عليه', 'وقت الموافقة', 'آخر دخول'];
 const PERMS = ['admin', 'add', 'edit', 'delete', 'reports'];
@@ -158,6 +159,7 @@ const ROUTES = {
   reread: { perm: 'edit', fn: rereadInvoice_ },
   setNotDup: { perm: 'edit', fn: setNotDup_ },
   setAttach: { perm: 'edit', fn: setAttach_ },
+  checkTaalum: { perm: 'edit', fn: checkTaalum_ },
   remove: { perm: 'delete', fn: removeInvoice_ },
   history: { fn: invoiceHistory_ },
   fileData: { fn: fileData_ },
@@ -743,6 +745,7 @@ function cleanFields_(src, o) {
     else v = String(v == null ? '' : v).trim().slice(0, 1000);
     if (k === 'date' && v) { const n = normDate_(v); if (!n) throw new Error('التاريخ غير مفهوم: ' + v); v = n; }
     if (k === 'kind' && v && [KIND.TAX, KIND.NOTAX, KIND.PAPER].indexOf(v) < 0) v = KIND.NOTAX;
+    if (k === 'taalum' && v !== 'نعم' && v !== 'لا') v = '';
     o[k] = v;
   });
   // إكمال المبالغ تلقائياً
@@ -930,6 +933,38 @@ function rereadInvoice_(r, me) {
     return res;
   } finally { lock.releaseLock(); }
 }
+// يفحص صورة فاتورة قديمة: هل مكتوب عليها «جمعية تعلم»؟ لا يغيّر أي بيان آخر فيها.
+// إن لم تتضح الصورة يعيد unclear فترسل الواجهة مقاطع مكبّرة، وتُقرأ حينها بالنموذج الأقوى.
+function checkTaalum_(r, me) {
+  const x = getInv_(r.id);
+  if (!x.file_id) throw new Error('لا توجد صورة لهذه الفاتورة');
+  if (x.taalum) return { inv: clientInv_(x) };
+  const blob = DriveApp.getFileById(x.file_id).getBlob();
+  const extras = (r.extras || []).slice(0, 4).filter(function (e) { return e && e.data && String(e.data).length < 6000000; });
+  const prompt = [
+    'انظر في هذا المستند كاملاً: هل مكتوب عليه اسم «جمعية تعلم» (أو «جمعية تعلّم للقرآن وعلومه»)؟',
+    'الاسم قد يكون في خانة العميل أو المشتري أو «المطلوب من» أو «السادة» أو «اسم الشركة»، وقد يكون مطبوعاً أو في ختم أو مكتوباً بخط اليد.',
+    'لا تعتبر كلمة «تعلم» وحدها في سياق آخر، ولا اسم جهة أخرى، دليلاً على ذلك.',
+    extras.length ? 'الصورة الأولى هي المستند كاملاً، والصور التالية مقاطع مكبّرة منه وليست مستندات أخرى.' : '',
+    'أعد JSON فقط: {"taalum":true/false, "found":"النص كما هو مكتوب إن وجد", "readable":true/false}',
+    'readable = false فقط إذا كانت الصورة غير واضحة بحيث لا يمكنك الجزم بعدم وجود الاسم.'
+  ].filter(String).join('\n');
+  const txt = askAi_(prompt, Utilities.base64Encode(blob.getBytes()), blob.getContentType(), extras, extras.length > 0);
+  let j;
+  try { j = parseJson_(txt); } catch (e) { throw new Error('لم تُفهم نتيجة القراءة الآلية'); }
+  if (j.taalum !== true && (j.readable === false || j.taalum !== false)) return { unclear: true, inv: clientInv_(x) };
+  const lock = LockService.getScriptLock(); lock.waitLock(30000);
+  try {
+    MEMO.inv = null;
+    const y = getInv_(r.id);
+    if (!y.taalum) {
+      y.taalum = j.taalum === true ? 'نعم' : 'لا';
+      writeInv_(y, y.row);
+      log_(me, 'فحص جمعية تعلم', y.code, y.id, y.taalum + (j.found ? ' — ' + String(j.found).slice(0, 200) : ''));
+    }
+    return { inv: clientInv_(y) };
+  } finally { lock.releaseLock(); }
+}
 function fileData_(r) {
   const x = getInv_(r.id);
   if (!x.file_id) throw new Error('لا توجد صورة');
@@ -996,7 +1031,7 @@ const INV_SCHEMA_ = {
   properties: {
     is_document: { type: 'BOOLEAN' }, kind: { type: 'STRING', enum: ['tax', 'no_tax', 'paper'] },
     date: { type: 'STRING' }, date_hijri: { type: 'STRING' }, number: { type: 'STRING' }, vendor: { type: 'STRING' }, vat_no: { type: 'STRING' },
-    subtotal: { type: 'NUMBER' }, vat: { type: 'NUMBER' }, total: { type: 'NUMBER' }, description: { type: 'STRING' }, category: { type: 'STRING' }
+    subtotal: { type: 'NUMBER' }, vat: { type: 'NUMBER' }, total: { type: 'NUMBER' }, description: { type: 'STRING' }, category: { type: 'STRING' }, taalum: { type: 'BOOLEAN' }
   },
   required: ['kind', 'date', 'total', 'vendor', 'description']
 };
@@ -1072,6 +1107,7 @@ function readWithAi_(b64, mime, extras) {
   catch (e) { if (first) return first; throw err1 || e; }
   if (!first) return second;
   // دمج: نأخذ من القراءة المتأنية ما نقص من الأولى
+  if (second.taalum === 'نعم') first.taalum = 'نعم';
   Object.keys(second).forEach(function (k) { if ((first[k] === '' || first[k] == null || first[k] === 0) && second[k] !== '' && second[k] != null) first[k] = second[k]; });
   return first;
 }
@@ -1080,7 +1116,7 @@ function readOnce_(b64, mime, extras, deep) {
   const prompt = [
     'أنت محاسب سعودي. استخرج بيانات هذا المستند (فاتورة أو إيصال أو ورقة مكتوبة باليد) وأعد JSON فقط بهذه المفاتيح:',
     '{"is_document":true/false, "kind":"tax|no_tax|paper", "date":"YYYY-MM-DD", "date_hijri":"", "number":"", "vendor":"", "vat_no":"",',
-    ' "subtotal":0, "vat":0, "total":0, "description":"", "category":""}',
+    ' "subtotal":0, "vat":0, "total":0, "description":"", "category":"", "taalum":true/false}',
     'القواعد:',
     '- kind = tax إذا كانت فاتورة ضريبية فيها رقم ضريبي للمورد (15 رقماً يبدأ بـ 3 غالباً) أو ضريبة قيمة مضافة. no_tax إذا كانت فاتورة أو إيصال مطبوع بلا ضريبة. paper إذا كانت ورقة مكتوبة بخط اليد أو سند صرف بدل فاتورة.',
     '- date بالتاريخ الميلادي. إن لم يوجد إلا تاريخ هجري فضعه في date_hijri وحوّله إلى ميلادي (تقويم أم القرى) في date.',
@@ -1088,6 +1124,7 @@ function readOnce_(b64, mime, extras, deep) {
     '- المبالغ أرقام بلا عملة. total هو المبلغ النهائي المدفوع شامل الضريبة. إن لم تُذكر الضريبة فاجعل vat = 0 و subtotal = total.',
     '- description: بيان صرف عربي مختصر (3 إلى 8 كلمات) يصف ما تم شراؤه أو صرفه.',
     '- category: اختر واحداً فقط من هذه القائمة يناسب المشتريات: ' + cats.join('، ') + '. إن لم يناسب أيٌّ منها فاتركه فارغاً.',
+    '- taalum = true إذا كان مكتوباً في أي مكان من المستند اسم «جمعية تعلم» أو «جمعية تعلّم للقرآن وعلومه» (في خانة العميل أو المشتري أو «المطلوب من» أو «السادة»، مطبوعاً أو في ختم أو بخط اليد)، وإلا false. كلمة «تعلم» وحدها في سياق آخر لا تكفي.',
     '- اكتب الأرقام بالأرقام الإنجليزية. اترك الحقل فارغاً "" إن لم تجده ولا تخمّن.'
   ].join('\n');
   GEN_CFG_ = { temperature: 0, responseMimeType: 'application/json', responseSchema: INV_SCHEMA_ };
@@ -1111,7 +1148,8 @@ function readOnce_(b64, mime, extras, deep) {
     date: normDate_(j.date) || normDate_(j.date_hijri),
     number: String(j.number || ''), vendor: String(j.vendor || ''), vat_no: String(j.vat_no || '').replace(/\s/g, ''),
     subtotal: num_(j.subtotal), vat: num_(j.vat), total: num_(j.total),
-    description: String(j.description || ''), category: cats.indexOf(String(j.category || '')) >= 0 ? j.category : ''
+    description: String(j.description || ''), category: cats.indexOf(String(j.category || '')) >= 0 ? j.category : '',
+    taalum: j.taalum === true ? 'نعم' : j.taalum === false ? 'لا' : ''
   };
   if (!o.total && !o.date && !o.vendor && !o.number) {
     log_(null, 'قراءة فارغة', '', '', String(txt).slice(0, 500));
