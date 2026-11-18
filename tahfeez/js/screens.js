@@ -569,7 +569,7 @@ function serverSettings(box) {
     ${S.server ? `<div class="row"><span class="chip green">✔️ مرتبط</span><span class="small muted" dir="ltr" style="word-break:break-all">${esc(S.server)}</span></div><div class="row" style="margin-top:10px"><button class="btn" id="syncnow">🔄 مزامنة الآن</button><button class="btn ghost" id="unlink">فصل الربط</button></div>` : `
     <p>الربط يجعل البيانات محفوظة في Google Sheet خاص بالمجمع، ويتيح: دخول المعلمين من جوالاتهم، ووصول طلبات التسجيل، وفتح صفحة الطالب لولي الأمر.</p>
     <ol style="line-height:2" class="small"><li>افتح <a href="https://sheets.new" target="_blank">Google Sheet جديد</a> (يفضل من حساب المجمع ibntymyah@gmail.com).</li>
-    <li>من القائمة: الإضافات ← Apps Script، واحذف المحتوى والصق <a href="https://github.com/aboyehia15-droid/tahfeez/blob/main/server/Code.gs" target="_blank">كود الخادم</a> (زر Copy raw file).</li>
+    <li>من القائمة: الإضافات ← Apps Script، واحذف المحتوى والصق <a href="https://github.com/aboyehia15-droid/goto/blob/main/tahfeez/server/Code.gs" target="_blank">كود الخادم</a> (زر Copy raw file).</li>
     <li>احفظ ثم شغّل الدالة <b>setup</b> مرة واحدة ووافق على الصلاحيات.</li>
     <li>نشر ← نشر جديد ← تطبيق ويب ← التنفيذ: <b>أنا</b>، الوصول: <b>أي شخص</b> ← نشر.</li><li>انسخ رابط تطبيق الويب والصقه هنا:</li></ol>
     <div class="row"><input class="inp grow" id="surl" dir="ltr" placeholder="https://script.google.com/macros/s/…/exec"><button class="btn" id="conn">🔗 ربط</button></div><div id="sres"></div>`}</div>`;
