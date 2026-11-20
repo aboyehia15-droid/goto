@@ -5,6 +5,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>بصمة مجمع ابن تيمية</title>
+<link rel="preconnect" href="https://script.google.com" crossorigin>
+<link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
+<link rel="dns-prefetch" href="https://script.googleusercontent.com">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0C4F47">
 <meta name="mobile-web-app-capable" content="yes">
@@ -406,6 +409,7 @@ const S={today:'',ver:-1,holidays:{},shifts:{},att:{},requests:[],teachers:{},me
 const U={tab:null,busy:false,rep:null,list:null,lmode:'teacher',lsel:'',err:''};
 
 function setState(st){
+  S._raw=st;
   S.ver=st.ver;S.att=st.att||{};S.requests=st.requests||[];S.sheetUrl=st.sheetUrl||'';
   S.holidays={};Object.entries(st.holidays||{}).forEach(([d,n])=>S.holidays[d]={name:n});
   S.shifts=st.shifts||{};S.settings=st.settings||{};S.extra=st.extra||[];S.duty=st.duty||[];S.messages=st.messages||[];S.admin=st.admin||null;S.users=st.users||[];S.permNames=st.permNames||{};
@@ -432,7 +436,7 @@ const can=perm=>isAdmin()&&(!S.admin||S.admin.owner||(S.admin.perms||[]).include
 const ACT_PERM={qin:'att',editday:'att',saveday:'att',delday:'att',delrange:'att',
   approve:'req',rejectm:'req',dorej:'req',undo:'req',delreq:'req',
   addt:'people',editt:'people',toggleact:'people',resetpin:'people',delt:'people',
-  addshift:'shifts',editshift:'shifts',delshift:'shifts',assignshift:'shifts',bulkflag:'shifts',addhol:'shifts',delhol:'shifts',
+  addshift:'shifts',editshift:'shifts',delshift:'shifts',assignshift:'shifts',bulkflag:'shifts',addhol:'shifts',delhol:'shifts',bulkprev:'att',bulkgo:'att',
   savedutyset:'duty',dutycell:'duty',dutydated:'duty',dutydel:'duty',saveextraset:'duty',saveextra:'duty',extradel:'duty',
   savemsgset:'msgs',sendmsg:'msgs',msgdel:'msgs',
   savebehavior:'settings',savepush:'settings',savelocation:'settings',saveremind:'settings',resolvemap:'settings',
@@ -465,8 +469,14 @@ function shiftsOn(tid,d){
 }
 /* ---------- المناوبة ---------- */
 const dutyLabel=t=>t==='end'?'مناوبة الانصراف':'مناوبة الاستقبال';
-const dutyHint=t=>t==='end'?'نهاية الفترة عند انصراف آخر طالب':'بداية الفترة لاستقبال الطلاب';
-const dutyTime=x=>x.type==='end'?x.sh.end:x.sh.start;
+const dutyHint=t=>t==='end'?'بعد نهاية الدوام حتى انصراف الطلاب':'قبل بداية الدوام لاستقبال الطلاب';
+const dutyAt=(type,sh)=>type==='end'?(sh.de||sh.end):(sh.ds||sh.start);
+const dutyTime=x=>dutyAt(x.type,x.sh);
+// نص موعد المناوبة: الاستقبال من بداية المناوبة حتى بداية الدوام، والانصراف من نهاية الدوام حتى انصراف آخر طالب
+const dutyWhenOf=(type,sh)=>type==='end'
+  ?(sh.de&&sh.de>sh.end?`من ${t12(sh.end)} حتى ${t12(sh.de)} (انصراف آخر طالب)`:`الساعة ${t12(sh.end)}`)
+  :(sh.ds&&sh.ds<sh.start?`من ${t12(sh.ds)} حتى ${t12(sh.start)}`:`الساعة ${t12(sh.ds||sh.start)}`);
+const dutyWhen=x=>dutyWhenOf(x.type,x.sh);
 // مناوبات فرد في يوم: الأسبوعية (في أيام الدوام فقط) + المحددة بتاريخ
 function dutyOn(tid,d){
   if(S.settings.dutyEnabled===false)return [];
@@ -899,7 +909,9 @@ if(PWA&&('serviceWorker' in navigator))navigator.serviceWorker.addEventListener(
   const m=ev.data||{};
   if(m.type==='push'){beepAlert();toast(m.body||m.title||'');if(Sess)loadState().catch(()=>{})}
   else if(m.type==='refresh'&&Sess)loadState().catch(()=>{});
+  else if(m.type==='updated'){U.updateReady=true}
 });
+try{if(PWA&&('serviceWorker' in navigator))navigator.serviceWorker.startMessages()}catch(e){}
 async function pushTest(){
   const reg=await navigator.serviceWorker.getRegistration();const sub=reg&&await reg.pushManager.getSubscription();
   if(!sub)throw new Error('فعّل التنبيهات أولاً');
@@ -1017,6 +1029,7 @@ function punchScreen(){
   const T=today(),tid=Sess.tid,ext=extrasOn(tid,T).length>0,hol=ext?null:S.holidays[T],work=isWork(T)||ext;
   const sg=suggestPeriod(tid),ps=periodsOf(tid,T).map(p=>({...p,live:periodLiveState(tid,p)})),multi=shiftsOn(tid,T).length>1;
   const state=(!work||hol)?'off':sg.kind==='in'&&sg.blocked?'blocked':sg.kind;
+  if(state==='in'||state==='out'){if(shiftsOn(tid,T).some(x=>x.reqLoc))geoWarm()}
   const d=parse(T),ex=excuses(tid,T);
   const bigLbl=sg.p&&sg.p.live==='reopenable'?'تسجيل العودة':'تسجيل الحضور';
   const lbl={in:bigLbl,out:'تسجيل الانصراف',done:'تم اليوم',off:'إجازة',blocked:'لا توجد فترة متاحة الآن'}[state];
@@ -1064,21 +1077,34 @@ function punchScreen(){
 function tickClock(){const c=$('#clock');if(c)c.textContent=t12(nowHM())}
 setInterval(tickClock,15000);
 let curDay=today();
+// تحديد الموقع مسبقاً في الخلفية عند فتح صفحة التوقيع حتى يكون جاهزاً لحظة الضغط
+const Geo={fix:null,watch:null};
+function geoWarm(){
+  if(Geo.watch!=null||!navigator.geolocation||document.hidden)return;
+  const start=()=>{try{Geo.watch=navigator.geolocation.watchPosition(p=>{Geo.fix={lat:p.coords.latitude,lng:p.coords.longitude,t:Date.now()}},()=>{},{enableHighAccuracy:true,maximumAge:30000,timeout:30000})}catch(e){}};
+  // لا يُطلب الإذن عند الفتح: يبدأ فقط إن كان الإذن ممنوحاً من قبل
+  try{if(navigator.permissions&&navigator.permissions.query)navigator.permissions.query({name:'geolocation'}).then(r=>{if(r.state==='granted')start()}).catch(()=>{});}catch(e){}
+}
+function geoStop(){if(Geo.watch!=null){try{navigator.geolocation.clearWatch(Geo.watch)}catch(e){}Geo.watch=null}}
+// نسخة أحدث من الواجهة جاهزة: تُطبَّق بهدوء عند مغادرة التطبيق، فيفتح المرة القادمة محدَّثاً
+document.addEventListener('visibilitychange',()=>{if(document.hidden){geoStop();if(U.updateReady&&!U.punching){U.updateReady=false;location.reload()}}});
 function getLocation(){
+  if(Geo.fix&&Date.now()-Geo.fix.t<90000)return Promise.resolve({lat:Geo.fix.lat,lng:Geo.fix.lng});
   return new Promise((res,rej)=>{
     if(!navigator.geolocation){rej(new Error('هذا المتصفح لا يدعم تحديد الموقع.'));return}
     navigator.geolocation.getCurrentPosition(
-      p=>res({lat:p.coords.latitude,lng:p.coords.longitude}),
+      p=>{Geo.fix={lat:p.coords.latitude,lng:p.coords.longitude,t:Date.now()};geoWarm();res({lat:Geo.fix.lat,lng:Geo.fix.lng})},
       e=>{
         const msg={1:'رفضتَ إذن الموقع. فعّله من إعدادات المتصفح أو الجوال وحاول مرة أخرى.',2:'تعذّر تحديد موقعك حالياً. تأكد من تفعيل GPS وحاول مرة أخرى.',3:'استغرق تحديد الموقع وقتاً طويلاً. حاول مرة أخرى.'}[e.code]||'تعذّر تحديد الموقع.';
         rej(new Error(msg));
       },
-      {enableHighAccuracy:true,timeout:15000,maximumAge:0}
+      {enableHighAccuracy:true,timeout:12000,maximumAge:30000}
     );
   });
 }
 async function doPunch(sid,manualTime){
   sid=sid||'';
+  if(U.punching){toast('جارٍ تأكيد التسجيل السابق…');return}
   const T=today();
   if(!worksOn(Sess.tid,T)){toast('اليوم ليس يوم دوام لك','bad');return}
   const sh=sid&&S.shifts[sid]?{id:sid,...S.shifts[sid]}:null;
@@ -1095,24 +1121,46 @@ async function doPunch(sid,manualTime){
   }
   let loc=null;
   if(sh&&sh.reqLoc){
-    toast('يتم تحديد موقعك...');
+    if(!(Geo.fix&&Date.now()-Geo.fix.t<90000))toast('يتم تحديد موقعك...');
     try{loc=await getLocation()}catch(e){toast(e.message,'bad');return}
   }
-  await guard(async()=>{
-    render();
-    try{
-      let method='pin';
-      const cred=Store.get('att_bio_'+Sess.tid);
-      if(cred){try{await Bio.verify(cred);method='bio'}catch(e){throw new Error(bioErr(e))}}
-      const r=await call('punch',{method,shiftId:sid,loc,manualTime:manualTime||''});
-      setState(r.state);
-      const pr=dayStatus(Sess.tid,today()).periods.find(p=>p.sid===sid||(r.shiftName&&p.sh&&p.sh.name===r.shiftName));
-      const flag=pr?(r.kind==='in'&&pr.st.late?` (تأخر ${fmtDur(pr.st.late)})`:r.kind==='out'&&pr.st.early?` (خروج مبكر ${fmtDur(pr.st.early)})`:''):'';
-      toast((r.kind==='in'?'تم تسجيل الحضور ':'تم تسجيل الانصراف ')+(r.shiftName&&shiftsOn(Sess.tid,today()).length>1?`(${r.shiftName}) `:'')+t12(r.hm)+flag,'ok');
-      Store.set(remKey(sid,r.kind),'1');
-    }finally{U.busy=false;render()}
-  });
+  // سرعة البرق: يظهر التسجيل فوراً على الشاشة ثم يُؤكَّد من الخادم في الخلفية (ويُتراجع عنه تلقائياً إن رفضه الخادم)
+  let method='pin';
+  const cred=Store.get('att_bio_'+Sess.tid);
+  if(cred){try{await Bio.verify(cred);method='bio'}catch(e){toast(bioErr(e),'bad');return}}
+  const hm=manualTime||nowHM(),multiN=shiftsOn(Sess.tid,today()).length>1;
+  const undo=optimisticPunch(Sess.tid,sid,kind,hm);
+  U.punching=true;document.body.classList.add('syncing');
+  toast((kind==='in'?'تم تسجيل الحضور ':'تم تسجيل الانصراف ')+(sh&&multiN?`(${sh.name}) `:'')+t12(hm),'ok');
+  render();
+  try{
+    const r=await call('punch',{method,shiftId:sid,loc,manualTime:manualTime||''});
+    setState(r.state);saveCache();
+    const pr=dayStatus(Sess.tid,today()).periods.find(p=>p.sid===sid||(r.shiftName&&p.sh&&p.sh.name===r.shiftName));
+    const flag=pr?(r.kind==='in'&&pr.st.late?` (تأخر ${fmtDur(pr.st.late)})`:r.kind==='out'&&pr.st.early?` (خروج مبكر ${fmtDur(pr.st.early)})`:''):'';
+    if(flag||r.hm!==hm||r.kind!==kind)toast((r.kind==='in'?'تم تسجيل الحضور ':'تم تسجيل الانصراف ')+(r.shiftName&&multiN?`(${r.shiftName}) `:'')+t12(r.hm)+flag,'ok');
+    Store.set(remKey(sid,r.kind),'1');
+  }catch(e){
+    undo();
+    if(e&&e.auth&&Sess){logout('انتهت الجلسة. سجّل الدخول من جديد.');return}
+    toast('لم يُسجَّل: '+((e&&e.message)||'حدث خطأ'),'bad');
+    try{beepAlert()}catch(x){}
+  }finally{U.punching=false;document.body.classList.remove('syncing');render()}
 }
+// تعديل محلي فوري لسجل اليوم (يُستبدل بنسخة الخادم عند وصولها)
+function optimisticPunch(tid,sid,kind,hm){
+  const T=today(),snap=JSON.stringify((S.att[tid]||{})[T]||null);
+  const all=(S.att[tid]=S.att[tid]||{}),day=(all[T]=all[T]||[]);
+  let rec=day.find(r=>sid?r.sid===sid:!r.sid);
+  if(!rec){
+    const x=sid&&S.shifts[sid];rec={sid:sid||'',i:'',o:'',a:0,n:''};
+    if(x){rec.ss=x.start;rec.se=x.end;rec.sg=x.grace||0;rec.sn=x.name}
+    day.push(rec);
+  }
+  if(kind==='in')rec.i=rec.i?rec.i+','+hm:hm;else rec.o=rec.o?rec.o+','+hm:hm;
+  return ()=>{const o=JSON.parse(snap);if(o)all[T]=o;else delete all[T];render()};
+}
+function saveCache(){try{const k=cacheKey();if(k){const j=JSON.stringify(S._raw);if(j.length<1500000)Store.set(k,j)}}catch(e){}}
 function manualTimeModal(sid){
   const sh=sid?S.shifts[sid]:null,now=nowHM();
   if(sid&&!sh)return;
@@ -1220,7 +1268,7 @@ const dayOrDate=v=>isDateStr(v)?`${DAYS[dow(v)]} ${ltr(greg(v))}`:DAYS[+v];
 function teacherTopNotes(tid,T){
   const out=[],n=unreadCount();
   if(n)out.push(`<button class="banner" style="cursor:pointer;width:100%;max-width:420px;text-align:center;border:1.5px solid var(--gold);margin:6px 0 0" data-act="tab" data-k="inbox">لديك ${n} ${n>1?'رسائل جديدة':'رسالة جديدة'} من الإدارة، اضغط للاطلاع</button>`);
-  dutyOn(tid,T).forEach(x=>out.push(`<div class="chip warn" style="margin-top:6px">${dutyLabel(x.type)}: ${esc(x.sh.name)} الساعة ${t12(dutyTime(x))}</div>`));
+  dutyOn(tid,T).forEach(x=>out.push(`<div class="chip warn" style="margin-top:6px">${dutyLabel(x.type)}: ${esc(x.sh.name)} ${dutyWhen(x)}</div>`));
   return out.join('');
 }
 function inboxScreen(){
@@ -1233,7 +1281,7 @@ function inboxScreen(){
     const todayD=dutyOn(tid,T);
     const weekly=mine.filter(x=>!isDateStr(x.day)).sort((a,b)=>(+a.day)-(+b.day)||mins(dutyTime(a))-mins(dutyTime(b)));
     const dated=mine.filter(x=>isDateStr(x.day)&&x.day>=T).sort((a,b)=>a.day<b.day?-1:a.day>b.day?1:0);
-    const row=(x,lbl)=>`<div class="li"><div class="sp"><div class="nm">${lbl}</div><div class="tm">${dutyLabel(x.type)} (${dutyHint(x.type)})<br>${esc(x.sh.name)} الساعة ${t12(dutyTime(x))}${x.note?' — '+esc(x.note):''}</div></div></div>`;
+    const row=(x,lbl)=>`<div class="li"><div class="sp"><div class="nm">${lbl}</div><div class="tm">${dutyLabel(x.type)} (${dutyHint(x.type)})<br>${esc(x.sh.name)} ${dutyWhen(x)}${x.note?' — '+esc(x.note):''}</div></div></div>`;
     secDuty=`<div class="card"><h3>مناوباتي</h3>
       <div class="lbl">اليوم</div>${todayD.length?todayD.map(x=>row(x,'اليوم')).join(''):'<p class="muted small" style="margin:4px 0 8px">لا توجد مناوبة عليك اليوم.</p>'}
       ${weekly.length?`<div class="lbl" style="margin-top:10px">جدولي الأسبوعي</div>${weekly.map(x=>row(x,DAYS[+x.day])).join('')}`:''}
@@ -1248,7 +1296,7 @@ function adminDutyToday(T){
   if(S.settings.dutyEnabled===false)return '';
   const list=dutyOn(null,T).filter(x=>S.teachers[x.tid]);
   if(!list.length)return '';
-  return `<div class="card"><h3>${ic('shield')} مناوبو اليوم</h3>${list.map(x=>`<div class="li"><div class="sp"><div class="nm">${esc(S.teachers[x.tid].name)}</div><div class="tm">${dutyLabel(x.type)} — ${esc(x.sh.name)} الساعة ${t12(dutyTime(x))}</div></div></div>`).join('')}</div>`;
+  return `<div class="card"><h3>${ic('shield')} مناوبو اليوم</h3>${list.map(x=>`<div class="li"><div class="sp"><div class="nm">${esc(S.teachers[x.tid].name)}</div><div class="tm">${dutyLabel(x.type)} — ${esc(x.sh.name)} ${dutyWhen(x)}</div></div></div>`).join('')}</div>`;
 }
 function adminQuickIn(tid){
   const T=today(),ps=periodsOf(tid,T);
@@ -1362,6 +1410,8 @@ function shiftModal(id){
   const x=id?S.shifts[id]:null;
   openModal(x?'تعديل الفترة':'إضافة فترة',`<div class="field"><label for="sf-n">اسم الفترة</label><input type="text" id="sf-n" maxlength="60" placeholder="مثال: الفترة الصباحية" value="${esc(x?x.name:'')}"></div>
     <div class="pair"><div class="field"><label for="sf-s">بداية الدوام</label><input type="time" id="sf-s" value="${x?x.start:'07:00'}"></div><div class="field"><label for="sf-e">نهاية الدوام</label><input type="time" id="sf-e" value="${x?x.end:'13:30'}"></div></div>
+    <div class="pair"><div class="field"><label for="sf-ds">بداية مناوبة الاستقبال</label><input type="time" id="sf-ds" value="${x&&x.ds?x.ds:''}"></div><div class="field"><label for="sf-de">نهاية مناوبة الانصراف (انصراف آخر طالب)</label><input type="time" id="sf-de" value="${x&&x.de?x.de:''}"></div></div>
+    <p class="muted small" style="margin:-4px 0 10px">مناوبة الاستقبال تبدأ من الساعة المحددة حتى بداية الدوام، ومناوبة الانصراف من نهاية الدوام حتى انصراف آخر طالب. اتركهما فارغين لاعتماد بداية الدوام ونهايته. التذكير بالمناوبة يُحسب من هذين الموعدين.</p>
     <div class="field"><label for="sf-g">سماح التأخر والخروج المبكر (دقائق)</label><input type="number" id="sf-g" min="0" max="120" value="${x?x.grace:10}"></div>
     <label class="switch"><input type="checkbox" id="sf-loc" ${x&&x.reqLoc?'checked':''}><span><b>يتطلب التوقيع داخل موقع العمل</b><br><span class="muted small">لا يُقبل تسجيل حضور أو انصراف هذه الفترة إلا ضمن نطاق الموقع المحدد في الإعدادات أدناه.</span></span></label>
     <label class="switch"><input type="checkbox" id="sf-man" ${x&&x.manual?'checked':''}><span><b>السماح بالتسجيل اليدوي للوقت</b><br><span class="muted small">يتيح للفرد اختيار وقت حضوره أو انصرافه بنفسه إن نسي التوقيع في حينه، ضمن حدود وقت الفترة فقط.</span></span></label>
@@ -1430,7 +1480,7 @@ function dutySettingsHtml(){
 function dutyCellModal(day,type,sid){
   const sh=S.shifts[sid];if(!sh)return;
   const sel=S.duty.filter(x=>x.day===String(day)&&x.sid===sid&&x.type===type).map(x=>x.tid);
-  openModal(`${dutyLabel(type)}: ${dayOrDate(String(day))}`,`<p class="muted small" style="margin-top:0">${esc(sh.name)} — ${dutyHint(type)} الساعة ${t12(type==='end'?sh.end:sh.start)}</p>${peoplePicker('dut',sel)}`,
+  openModal(`${dutyLabel(type)}: ${dayOrDate(String(day))}`,`<p class="muted small" style="margin-top:0">${esc(sh.name)} — ${dutyHint(type)} ${dutyWhenOf(type,sh)}</p>${peoplePicker('dut',sel)}`,
     `<button class="btn primary" data-act="savedutycell" data-day="${esc(String(day))}" data-type="${type}" data-sid="${esc(sid)}">حفظ</button><button class="btn" data-act="close">إلغاء</button>`);
 }
 
@@ -1546,7 +1596,7 @@ function settingsScreen(){
   <div class="card"><div class="row"><h3 style="margin:0">فترات الدوام</h3><span class="sp"></span><button class="btn sm primary" data-act="addshift">${ic('plus')}إضافة فترة</button></div>
     <p class="muted small" style="margin:6px 0 4px">حدّد أوقات كل فترة وعيّن عليها المعلمين والموظفين. يمكن للفرد الواحد أن يكون له أكثر من فترة في اليوم (مثل صباحية ومسائية)، ويسجّل حضوراً وانصرافاً لكل فترة. يُحسب التأخر والخروج المبكر لكل فترة على حدة.</p>
     ${shs.length?`<div class="row" style="margin:2px 0 10px"><button class="btn sm" data-act="bulkflag" data-field="reqLoc" data-value="1">تفعيل الموقع لكل الفترات</button><button class="btn sm" data-act="bulkflag" data-field="reqLoc" data-value="0">إيقافه للكل</button><button class="btn sm" data-act="bulkflag" data-field="manual" data-value="1">تفعيل التسجيل اليدوي للكل</button><button class="btn sm" data-act="bulkflag" data-field="manual" data-value="0">إيقافه للكل</button></div>`:''}
-    ${shs.length?shs.map(([id,x])=>`<div class="li" style="align-items:flex-start;flex-wrap:wrap"><div class="sp" style="min-width:180px"><div class="nm">${esc(x.name)}</div><div class="muted small">${t12(x.start)} – ${t12(x.end)}، سماح ${x.grace} د، عدد الأفراد ${cnt(id)}</div>
+    ${shs.length?shs.map(([id,x])=>`<div class="li" style="align-items:flex-start;flex-wrap:wrap"><div class="sp" style="min-width:180px"><div class="nm">${esc(x.name)}</div><div class="muted small">${t12(x.start)} – ${t12(x.end)}، سماح ${x.grace} د، عدد الأفراد ${cnt(id)}</div><div class="muted small">المناوبة: الاستقبال ${dutyWhenOf('start',x)} • الانصراف ${dutyWhenOf('end',x)}</div>
       <div class="row" style="gap:6px;margin-top:4px"><span class="chip ${x.reqLoc?'pri':''}">${x.reqLoc?'الموقع مفعّل':'بلا قيد موقع'}</span><span class="chip ${x.manual?'pri':''}">${x.manual?'التسجيل اليدوي مفعّل':'بلا تسجيل يدوي'}</span></div></div>
       <div class="row" style="gap:6px"><button class="btn sm" data-act="assignshift" data-id="${esc(id)}">تعيين الأفراد</button><button class="btn sm" data-act="editshift" data-id="${esc(id)}">تعديل</button><button class="btn sm danger" data-act="delshift" data-id="${esc(id)}">حذف</button></div></div>`).join(''):'<div class="empty" style="margin-top:10px">لا توجد فترات بعد. أضف فترة مثل «الفترة الصباحية».</div>'}</div>`;
   else if(cur==='duty')content=dutySettingsHtml();
@@ -1556,13 +1606,57 @@ function settingsScreen(){
   else if(cur==='audit')content=auditHtml();
   else content=`
   <div class="card"><h3>الإجازات الرسمية</h3><p class="muted small" style="margin-top:0">لا تُحتسب هذه الأيام غياباً في الكشوف، ولا يُسجَّل فيها حضور. الجمعة والسبت خارج الدوام دائماً.</p>
-    <div class="row" style="align-items:flex-end"><div class="field" style="margin:0"><label for="hd-d">التاريخ</label><input type="date" id="hd-d"></div><div class="field sp" style="margin:0;min-width:160px"><label for="hd-n">الاسم</label><input type="text" id="hd-n" maxlength="80" placeholder="مثال: اليوم الوطني"></div><button class="btn primary" data-act="addhol">إضافة</button></div>
-    ${hs.length?`<div style="margin-top:10px">${hs.map(h=>`<div class="li"><div class="sp"><span class="nm">${esc(h.name||'إجازة')}</span> <span class="muted small">${DAYS[dow(h.d)]} ${ltr(greg(h.d))}</span></div><button class="btn sm danger" data-act="delhol" data-d="${h.d}">حذف</button></div>`).join('')}</div>`:''}</div>
+    <div class="row" style="align-items:flex-end"><div class="field" style="margin:0"><label for="hd-d">من تاريخ</label><input type="date" id="hd-d" data-act-change="holfrom"></div><div class="field" style="margin:0"><label for="hd-t">إلى تاريخ</label><input type="date" id="hd-t"></div><div class="field sp" style="margin:0;min-width:160px"><label for="hd-n">الاسم</label><input type="text" id="hd-n" maxlength="80" placeholder="مثال: إجازة منتصف الفصل"></div><button class="btn primary" data-act="addhol">إضافة</button></div>
+    <p class="muted small" style="margin:6px 0 0">لإجازة يوم واحد اترك «إلى تاريخ» فارغاً أو مساوياً لـ«من تاريخ».</p>
+    ${hs.length?`<div style="margin-top:10px">${holGroups(hs).map(g=>`<div class="li"><div class="sp"><span class="nm">${esc(g.name||'إجازة')}</span> <span class="muted small">${g.from===g.to?`${DAYS[dow(g.from)]} ${ltr(greg(g.from))}`:`من ${DAYS[dow(g.from)]} ${ltr(greg(g.from))} إلى ${DAYS[dow(g.to)]} ${ltr(greg(g.to))} (${g.n} أيام)`}</span></div><button class="btn sm danger" data-act="delhol" data-f="${g.from}" data-t="${g.to}">حذف</button></div>`).join('')}</div>`:''}</div>
+  ${bulkFillHtml()}
   <div class="card"><h3>حذف سجلات الحضور</h3><p class="muted small" style="margin-top:0">يحذف سجلات الحضور والانصراف للفترة المحددة نهائياً، ولا يحذف الأفراد. لحذف يوم واحد لفرد استخدم زر التعديل في الكشف.</p>
     <div class="field"><label for="dr-t">الفرد</label><select id="dr-t"><option value="all">كل الأفراد</option>${teachersSorted().map(t=>`<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}</select></div>
     <div class="pair"><div class="field"><label for="dr-f">من تاريخ</label><input type="date" id="dr-f" value="${T.slice(0,8)}01"></div><div class="field"><label for="dr-e">إلى تاريخ</label><input type="date" id="dr-e" value="${T}"></div></div>
     <button class="btn danger" data-act="delrange">حذف السجلات</button></div>`;
   return `<h2 class="no-print">الإعدادات</h2>${nav}${content}`;
+}
+
+
+/* ---------- الإجازات الرسمية: تجميع الأيام المتتالية بنفس الاسم في فترة واحدة ---------- */
+function holGroups(hs){
+  const out=[];
+  hs.forEach(h=>{const g=out[out.length-1];if(g&&g.name===(h.name||'')&&addDays(g.to,1)===h.d){g.to=h.d;g.n++}else out.push({from:h.d,to:h.d,name:h.name||'',n:1})});
+  return out;
+}
+/* ---------- تعبئة الأيام غير الموقعة دفعة واحدة ---------- */
+function bulkFillHtml(){
+  if(!can('att'))return '';
+  const T=today(),shs=Object.entries(S.shifts).sort((a,b)=>byStart(a[1],b[1]));
+  return `<div class="card"><h3>تعبئة الأيام غير الموقعة دفعة واحدة</h3>
+    <p class="muted small" style="margin-top:0">يسجّل الحضور والانصراف لكل الأيام التي لم يوقّع فيها المعلم أو الموظف خلال المدة المحددة، لفرد أو لعدة أفراد أو للجميع، دون فتح كل يوم على حدة. لا يغيّر أي يوم موقَّع، ولا يشمل الجمعة والسبت والإجازات الرسمية والأيام المستقبلية. يظهر في الكشف أنه «تعديل الإدارة» مع اسمك ووقت التعديل.</p>
+    <div class="pair"><div class="field"><label for="bf-f">من تاريخ</label><input type="date" id="bf-f" value="${T.slice(0,8)}01" max="${T}"></div><div class="field"><label for="bf-t">إلى تاريخ</label><input type="date" id="bf-t" value="${T}" max="${T}"></div></div>
+    <div class="pair"><div class="field"><label for="bf-s">الفترة</label><select id="bf-s"><option value="">كل فترات الفرد</option>${shs.map(([id,x])=>`<option value="${esc(id)}">${esc(x.name)} (${t12(x.start)} – ${t12(x.end)})</option>`).join('')}</select></div>
+      <div class="field"><label for="bf-mode">الأوقات المسجّلة</label><select id="bf-mode" data-act-change="bulkmode"><option value="official">مواعيد الفترة الرسمية (بداية الدوام ونهايته)</option><option value="custom">وقت محدد أكتبه</option></select></div></div>
+    <div class="pair" id="bf-times" style="display:none"><div class="field"><label for="bf-in">وقت الحضور</label><input type="time" id="bf-in" value="07:00"></div><div class="field"><label for="bf-out">وقت الانصراف</label><input type="time" id="bf-out" value="13:30"></div></div>
+    <label class="switch"><input type="checkbox" id="bf-fo" checked><span><b>إكمال الانصراف للأيام التي سُجّل فيها الحضور فقط</b><br><span class="muted small">يضيف وقت الانصراف لمن وقّع حضوره ونسي الانصراف.</span></span></label>
+    <label class="switch"><input type="checkbox" id="bf-ex" checked><span><b>تخطي أيام الغياب المعتمد</b><br><span class="muted small">لا تُعبّأ الأيام التي لدى الفرد فيها طلب غياب تمت الموافقة عليه.</span></span></label>
+    <div class="field"><label for="bf-n">ملاحظة تظهر في الكشف</label><input type="text" id="bf-n" maxlength="200" placeholder="مثال: تعطل جهاز البصمة"></div>
+    <label style="font-weight:700;display:block;margin:6px 0 2px">الأفراد</label>${peoplePicker('bf',[])}
+    <div class="row" style="margin-top:10px"><button class="btn" data-act="bulkprev">معاينة العدد</button><button class="btn primary" data-act="bulkgo">تعبئة الأيام غير الموقعة</button></div>
+    <div id="bf-res" class="muted small" style="margin-top:8px"></div></div>`;
+}
+async function bulkFill(dry){
+  const p={from:$('#bf-f').value,to:$('#bf-t').value,sid:$('#bf-s').value,mode:$('#bf-mode').value,in:$('#bf-in').value,out:$('#bf-out').value,fillOut:$('#bf-fo').checked,skipExcused:$('#bf-ex').checked,note:$('#bf-n').value.trim(),tids:picked('bf')};
+  if(!p.from||!p.to||p.to<p.from){toast('حدد المدة: من تاريخ وإلى تاريخ','bad');return}
+  if(!p.tids.length){toast('اختر فرداً واحداً على الأقل أو اضغط «تحديد الكل»','bad');return}
+  if(p.mode==='custom'&&p.in&&p.out&&p.out<=p.in){toast('الانصراف يجب أن يكون بعد الحضور','bad');return}
+  const box=$('#bf-res');
+  try{
+    box.textContent='جارٍ الحساب…';
+    const r=await call('attBulk',Object.assign({dry:true},p));
+    const msg=`سيُضاف ${r.added} سجل جديد${r.updated?` ويُكمَل ${r.updated} سجل`:''}${r.skipped?`، ويُتخطّى ${r.skipped} يوم غياب معتمد`:''}.`;
+    box.textContent=msg;
+    if(dry)return;
+    if(!r.added&&!r.updated){toast('لا توجد أيام غير موقعة في هذه المدة','ok');return}
+    if(!confirm(msg+'\nهل تريد التنفيذ؟'))return;
+    await act('attBulk',p,`تمت التعبئة: ${r.added} سجل جديد${r.updated?` و${r.updated} مكتمل`:''}`);
+  }catch(e){box.textContent='';toast(e.message||'تعذّر التنفيذ','bad')}
 }
 
 /* ---------- الكشوف ---------- */
@@ -1736,7 +1830,7 @@ const A={
   dodelt:d=>act('teacherDelete',{id:d.id,purge:!!$('#dl-purge').checked},r=>r.removed?`تم الحذف مع ${r.removed} سجل حضور`:'تم الحذف',closeModal),
   delreq:d=>{if(confirm('حذف هذا الطلب نهائياً؟'))act('reqDelete',{id:d.id},'تم حذف الطلب')},
   addshift:()=>shiftModal(''), editshift:d=>shiftModal(d.id),
-  saveshift:d=>{const n=$('#sf-n').value.trim();if(!n){toast('اسم الفترة مطلوب','bad');return}const s0=$('#sf-s').value,e0=$('#sf-e').value;if(!s0||!e0||e0<=s0){toast('نهاية الدوام يجب أن تكون بعد بدايته','bad');return}act('shiftSave',{id:d.id||'',name:n,start:s0,end:e0,grace:$('#sf-g').value||0,reqLoc:$('#sf-loc').checked,manual:$('#sf-man').checked},'تم حفظ الفترة',closeModal)},
+  saveshift:d=>{const n=$('#sf-n').value.trim();if(!n){toast('اسم الفترة مطلوب','bad');return}const s0=$('#sf-s').value,e0=$('#sf-e').value;if(!s0||!e0||e0<=s0){toast('نهاية الدوام يجب أن تكون بعد بدايته','bad');return}const ds=$('#sf-ds').value,de=$('#sf-de').value;if(ds&&de&&de<=ds){toast('نهاية المناوبة يجب أن تكون بعد بدايتها','bad');return}if(de&&de<s0){toast('نهاية مناوبة الانصراف يجب أن تكون بعد بداية الدوام','bad');return}act('shiftSave',{id:d.id||'',name:n,start:s0,end:e0,grace:$('#sf-g').value||0,reqLoc:$('#sf-loc').checked,manual:$('#sf-man').checked,dutyStart:ds,dutyEnd:de},'تم حفظ الفترة',closeModal)},
   bulkflag:d=>{const on=d.value==='1';if(confirm(`${on?'تفعيل':'إيقاف'} ${d.field==='reqLoc'?'اشتراط الموقع':'التسجيل اليدوي'} لكل الفترات؟`))act('shiftSetFlagAll',{field:d.field,value:on},'تم التحديث')},
   resolvemap:()=>{const link=$('#ml-link').value.trim();if(!link){toast('الصق الرابط أولاً','bad');return}act('resolveMapLink',{url:link},r=>`تم استخراج الإحداثيات (${r.lat}, ${r.lng})`)},
   savelocation:()=>{const lat=$('#ml-lat').value.trim(),lng=$('#ml-lng').value.trim(),r0=$('#ml-r').value;if(!lat||!lng){toast('أدخل الإحداثيات','bad');return}act('settingsSave',{workLat:lat,workLng:lng,workRadius:r0},'تم حفظ الموقع')},
@@ -1785,8 +1879,9 @@ const A={
   install:()=>doInstall(),
   toggleact:d=>act('teacherActive',{id:d.id,active:S.teachers[d.id]?.active===false}),
   resetpin:d=>{if(confirm('إعادة ضبط رمز هذا المعلم؟ سيُسجَّل خروجه ويضع رمزاً جديداً عند دخوله.'))act('teacherResetPin',{id:d.id},'تمت إعادة الضبط')},
-  addhol:()=>{const d=$('#hd-d').value;if(!d){toast('حدد التاريخ','bad');return}act('holAdd',{date:d,name:$('#hd-n').value.trim()},'تمت الإضافة')},
-  delhol:d=>act('holDel',{date:d.d}),
+  addhol:()=>{const f=$('#hd-d').value,t=$('#hd-t').value||f;if(!f){toast('حدد تاريخ البداية','bad');return}if(t<f){toast('«إلى تاريخ» يجب أن يكون بعد «من تاريخ»','bad');return}act('holAdd',{from:f,to:t,name:$('#hd-n').value.trim()},'تمت إضافة الإجازة')},
+  delhol:d=>{const f=d.f||d.d,t=d.t||f;if(f!==t&&!confirm('حذف الإجازة من '+greg(f)+' إلى '+greg(t)+'؟'))return;act('holDel',{from:f,to:t})},
+  bulkprev:()=>bulkFill(true),bulkgo:()=>bulkFill(false),
   rkind:d=>{if(!U.rep)initRep();U.rep.kind=d.v;render()},
   rprev:()=>stepRep(-1),rnext:()=>stepRep(1),
   rfull:()=>{U.rep.from=firstDataDate();U.rep.to=today();render()},
@@ -1803,7 +1898,13 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&e.target.dataset&&e.target.dataset.enter){e.preventDefault();A[e.target.dataset.enter]&&A[e.target.dataset.enter]()}
 });
 document.addEventListener('change',e=>{
-  const el=e.target,k=el.dataset&&el.dataset.bind;if(!k)return;
+  const el=e.target;
+  if(el.dataset&&el.dataset.actChange){
+    if(el.dataset.actChange==='bulkmode'){const c=el.value==='custom',b=$('#bf-times');if(b)b.style.display=c?'':'none'}
+    if(el.dataset.actChange==='holfrom'){const t=$('#hd-t');if(t&&(!t.value||t.value<el.value))t.value=el.value}
+    return;
+  }
+  const k=el.dataset&&el.dataset.bind;if(!k)return;
   if(k==='lsel'){U.lsel=el.value;render();return}
   if(k==='lusr'){U.lusr=el.value;return}
   if(k==='dshift'){U.dshift=el.value;render();return}

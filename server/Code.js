@@ -26,7 +26,7 @@ const DAY_NAMES = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأر
 // أوراق الجدول. يمكنك تغيير عناوين الأعمدة بحرية، لكن لا تغيّر ترتيبها.
 const SH = {
   teachers: { name: 'المعلمون', cols: ['المعرّف', 'الاسم', 'المادة أو الوظيفة', 'فعّال', 'الترتيب', 'رمز الدخول (مشفّر)', 'النوع', 'معرّف الفترات (مفصولة بفاصلة)'] },
-  shifts: { name: 'الفترات', cols: ['المعرّف', 'اسم الفترة', 'بداية الدوام', 'نهاية الدوام', 'سماح (دقائق)', 'يتطلب الموقع', 'يسمح بالتسجيل اليدوي'] },
+  shifts: { name: 'الفترات', cols: ['المعرّف', 'اسم الفترة', 'بداية الدوام', 'نهاية الدوام', 'سماح (دقائق)', 'يتطلب الموقع', 'يسمح بالتسجيل اليدوي', 'بداية المناوبة', 'نهاية المناوبة (انصراف آخر طالب)'] },
   attendance: { name: 'الحضور', cols: ['معرّف الفرد', 'الاسم', 'التاريخ', 'اليوم', 'الحضور', 'الانصراف', 'وقت تسجيل الحضور', 'وقت تسجيل الانصراف', 'الطريقة', 'تعديل الإدارة', 'ملاحظة', 'الفترة', 'بداية الفترة', 'نهاية الفترة', 'سماح (دقائق)', 'معرّف الفترة', 'عُدّل بواسطة', 'وقت التعديل'] },
   requests: { name: 'الطلبات', cols: ['المعرّف', 'معرّف الفرد', 'الاسم', 'النوع', 'من تاريخ', 'إلى تاريخ', 'من ساعة', 'إلى ساعة', 'السبب', 'وقت الطلب', 'الحالة', 'ملاحظة الإدارة', 'وقت القرار', 'القرار بواسطة'] },
   holidays: { name: 'الإجازات', cols: ['التاريخ', 'الاسم'] },
@@ -160,6 +160,7 @@ function api(req) {
       case 'audit': needPerm_(s, ''); return { ok: true, audit: audit_(p) };
     }
     const spec = ADMIN_ACTIONS[a];
+    if (a === 'attBulk' && p.dry) { need_(s, 'admin'); needPerm_(s, 'att'); return Object.assign({ ok: true }, attBulk_(p, s)); }
     if (spec) { const r = adminMutate_(s, a, spec, p); if (a === 'msgSend' && r.ok) notifyMessages_(p); return r; }
     fail_('طلب غير معروف');
   } catch (e) {
@@ -178,6 +179,7 @@ const ADMIN_ACTIONS = {
   reqDelete: ['req', 'حذف طلب', function (s, p) { reqDelete_(p); }],
   dayEdit: ['att', 'تعديل حضور يوم', function (s, p) { dayEdit_(p, s); }],
   dayDel: ['att', 'حذف سجلات يوم', function (s, p) { dayDel_(p); }],
+  attBulk: ['att', 'تعبئة الأيام غير الموقعة', function (s, p) { return attBulk_(p, s); }],
   attDelete: ['att', 'حذف سجلات فترة', function (s, p) { return attDelete_(p); }],
   teacherAdd: ['people', 'إضافة أفراد', function (s, p) { teacherAdd_(p); }],
   teacherEdit: ['people', 'تعديل بيانات فرد', function (s, p) { teacherEdit_(p); }],
@@ -212,6 +214,8 @@ function describe_(a, p) {
     switch (a) {
       case 'decide': { const r = rows_('requests').map(reqFromRow_).filter(function (x) { return x.id === S_(p.id); })[0]; return (p.status === 'approved' ? 'موافقة' : 'رفض') + (r ? ' — ' + tNameOf_(r.tid) + ' — ' + (r.type === 'absence' ? 'غياب ' : 'استئذان ') + r.from : '') + (p.note ? ' — ' + p.note : ''); }
       case 'undoDecide': case 'reqDelete': { const r = rows_('requests').map(reqFromRow_).filter(function (x) { return x.id === S_(p.id); })[0]; return r ? tNameOf_(r.tid) + ' — ' + r.from : ''; }
+      case 'holAdd': case 'holDel': { const f = S_(p.from || p.date), t = S_(p.to || p.from || p.date); return (p.name ? p.name + ' — ' : '') + (f === t ? f : 'من ' + f + ' إلى ' + t); }
+      case 'attBulk': return 'من ' + S_(p.from) + ' إلى ' + S_(p.to) + ' — ' + ((p.tids || []).length > 5 ? (p.tids || []).length + ' أفراد' : namesOf_(p.tids)) + ' — ' + (p.sid ? shNameOf_(p.sid) : 'كل الفترات') + ' — ' + (p.mode === 'custom' ? (S_(p.in) || '—') + ' ← ' + (S_(p.out) || '—') : 'مواعيد الفترة الرسمية') + (p.note ? ' — ' + p.note : '');
       case 'dayEdit': return tNameOf_(p.tid) + ' — ' + p.date + ' — ' + (p.periods || []).map(function (x) { return (x.sid ? shNameOf_(x.sid) + ': ' : '') + (x.in || '—') + ' ← ' + (x.out || '—'); }).join('، ') + (p.note ? ' — ' + p.note : '');
       case 'dayDel': return tNameOf_(p.tid) + ' — ' + p.date;
       case 'attDelete': return (p.tid && p.tid !== 'all' ? tNameOf_(p.tid) : 'كل الأفراد') + ' — من ' + p.from + ' إلى ' + p.to;
@@ -223,8 +227,6 @@ function describe_(a, p) {
       case 'shiftDelete': return shNameOf_(p.id);
       case 'shiftAssign': return shNameOf_(p.shiftId) + ' — ' + namesOf_(p.tids);
       case 'shiftSetFlagAll': return (p.field === 'reqLoc' ? 'اشتراط الموقع' : 'التسجيل اليدوي') + ' — ' + (p.value ? 'تفعيل' : 'إيقاف');
-      case 'holAdd': return S_(p.date) + ' ' + S_(p.name);
-      case 'holDel': return S_(p.date);
       case 'settingsSave': return Object.keys(p).filter(function (k) { return k !== 'token'; }).map(function (k) { return k + '=' + (typeof p[k] === 'boolean' ? (p[k] ? 'تفعيل' : 'إيقاف') : S_(p[k]).slice(0, 60)); }).join('، ');
       case 'extraSave': return S_(p.date) + ' — ' + (shNameOf_(p.sid) || 'بدون فترة') + ' — ' + namesOf_(p.tids);
       case 'extraDelete': { const x = allExtra_().filter(function (e) { return e.id === S_(p.id); })[0]; return x ? tNameOf_(x.tid) + ' — ' + x.date : ''; }
@@ -249,7 +251,7 @@ function adminMutate_(s, a, spec, p) {
     needPerm_(s, perm);
     const details = describe_(a, p);
     const extra = spec[2](s, p);
-    log_(s, spec[1], details);
+    log_(s, spec[1], details + (a === 'attBulk' && extra ? ' — أُضيف ' + extra.added + ' وعُدّل ' + extra.updated : ''));
     bump_();
     const out = { ok: true, state: state_(s) };
     if (extra) Object.keys(extra).forEach(function (k) { out[k] = extra[k]; });
@@ -275,7 +277,16 @@ function authFail_() { const e = new Error('AUTH'); e.auth = true; throw e; }
 function withLock_(fn) {
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
-  try { return fn(); } finally { lock.releaseLock(); }
+  MEMO.rows = {}; MEMO.rcv = {}; MEMO.fromCache = {}; MEMO.locked = true;
+  try {
+    try { return fn(); }
+    catch (e) {
+      if (!e || !e.rcRetry) throw e;
+      // عُدّل الجدول يدوياً: إعادة التنفيذ مرة واحدة على البيانات الفعلية
+      MEMO.rows = {}; MEMO.rcv = {}; MEMO.fromCache = {};
+      return fn();
+    }
+  } finally { MEMO.locked = false; lock.releaseLock(); }
 }
 function need_(s, role) { if (s.role !== role) fail_('غير مصرّح لك بهذا الإجراء'); }
 
@@ -323,10 +334,61 @@ function sheet_(k) {
 }
 function rows_(k) {
   if (MEMO.rows[k]) return MEMO.rows[k];
-  const sh = sheet_(k), n = sh.getLastRow();
-  const out = n < 2 ? [] : sh.getRange(2, 1, n - 1, SH[k].cols.length).getValues();
+  // سرعة: نسخة من الورقة في ذاكرة الخادم المؤقتة تُحدَّث عند كل تعديل من التطبيق (والتعديل اليدوي في الجدول يظهر خلال 5 دقائق)
+  const v = rcVer_(k);
+  let out = v ? rcGet_(k, v) : null;
+  if (out) { (MEMO.fromCache = MEMO.fromCache || {})[k] = out.length; }
+  else {
+    const sh = sheet_(k), n = sh.getLastRow();
+    out = n < 2 ? [] : sh.getRange(2, 1, n - 1, SH[k].cols.length).getValues();
+    if (v) rcPut_(k, v, out);
+  }
   MEMO.rows[k] = out;
   return out;
+}
+// ---------- ذاكرة مؤقتة لصفوف الأوراق ----------
+const RC_TTL = 300, RC_CHUNK = 90000;
+function rcCache_() { if (!MEMO.cache) MEMO.cache = CacheService.getScriptCache(); return MEMO.cache; }
+function rcVer_(k) {
+  try {
+    if (MEMO.rcv && MEMO.rcv[k]) return MEMO.rcv[k];
+    const c = rcCache_(), key = 'sv_' + k;
+    let v = c.get(key);
+    if (!v) { v = Utilities.getUuid().slice(0, 8); c.put(key, v, 21600); }
+    (MEMO.rcv = MEMO.rcv || {})[k] = v;
+    return v;
+  } catch (e) { return ''; }
+}
+function rcGet_(k, v) {
+  try {
+    const c = rcCache_(), meta = c.get('rc_' + k + '_' + v);
+    if (meta == null) return null;
+    const n = Number(meta), keys = [];
+    for (let i = 0; i < n; i++) keys.push('rc_' + k + '_' + v + '_' + i);
+    const got = n ? c.getAll(keys) : {};
+    let txt = '';
+    for (let i = 0; i < n; i++) { const part = got[keys[i]]; if (part == null) return null; txt += part; }
+    if (!n) return [];
+    return JSON.parse(txt, function (key, val) { return val && typeof val === 'object' && val.$d !== undefined ? new Date(val.$d) : val; });
+  } catch (e) { return null; }
+}
+function rcPut_(k, v, rows) {
+  try {
+    const txt = JSON.stringify(rows.map(function (r) { return r.map(function (x) { return x instanceof Date ? { $d: x.getTime() } : x; }); }));
+    if (txt.length > RC_CHUNK * 60) return;
+    const o = {}; let n = 0;
+    for (let i = 0; i < txt.length; i += RC_CHUNK) o['rc_' + k + '_' + v + '_' + (n++)] = txt.slice(i, i + RC_CHUNK);
+    const c = rcCache_();
+    if (n) c.putAll(o, RC_TTL + 30);
+    c.put('rc_' + k + '_' + v, String(n), RC_TTL);
+  } catch (e) { }
+}
+function rcBump_(k) {
+  try {
+    const v = Utilities.getUuid().slice(0, 8);
+    rcCache_().put('sv_' + k, v, 21600);
+    (MEMO.rcv = MEMO.rcv || {})[k] = v;
+  } catch (e) { }
 }
 // آخر n صفوف فقط (للسجلات الطويلة مثل سجل التعديلات)
 function tailRows_(k, n) {
@@ -335,8 +397,16 @@ function tailRows_(k, n) {
   const from = Math.max(2, last - n + 1);
   return sh.getRange(from, 1, last - from + 1, SH[k].cols.length).getValues();
 }
-function dirty_(k) { delete MEMO.rows[k]; }
+function dirty_(k) { delete MEMO.rows[k]; if (MEMO.fromCache) delete MEMO.fromCache[k]; rcBump_(k); }
+// قبل الكتابة على صف محدد: تأكد أن النسخة المؤقتة مطابقة لعدد صفوف الجدول (إن عُدّل الجدول يدوياً بإضافة أو حذف صفوف)
+function rcCheck_(k) {
+  if (!MEMO.fromCache || MEMO.fromCache[k] == null) return;
+  const n = sheet_(k).getLastRow() - 1, len = MEMO.fromCache[k];
+  delete MEMO.fromCache[k];
+  if (Math.max(n, 0) !== len) { rcBump_(k); delete MEMO.rows[k]; const e = new Error('تغيّرت البيانات في الجدول للتو. أعد المحاولة.'); e.rcRetry = true; throw e; }
+}
 function setCells_(k, row, col, arr) {
+  rcCheck_(k);
   sheet_(k).getRange(row, col, 1, arr.length).setNumberFormat('@').setValues([arr]);
   dirty_(k);
 }
@@ -345,9 +415,16 @@ function appendRow_(k, arr) {
   sh.getRange(sh.getLastRow() + 1, 1, 1, arr.length).setNumberFormat('@').setValues([arr]);
   dirty_(k);
 }
-function delRow_(k, row) { sheet_(k).deleteRow(row); dirty_(k); }
+function appendRows_(k, rows) {
+  if (!rows.length) return;
+  const sh = sheet_(k), w = SH[k].cols.length;
+  sh.getRange(sh.getLastRow() + 1, 1, rows.length, w).setNumberFormat('@').setValues(rows.map(function (r) { return r.slice(0, w).concat(new Array(Math.max(0, w - r.length)).fill('')); }));
+  dirty_(k);
+}
+function delRow_(k, row) { rcCheck_(k); sheet_(k).deleteRow(row); dirty_(k); }
 // إعادة كتابة كل صفوف ورقة (للحذف الجماعي)
 function rewriteRows_(k, rows) {
+  rcCheck_(k);
   const sh = sheet_(k), w = SH[k].cols.length, n = sh.getLastRow();
   if (n >= 2) sh.getRange(2, 1, n - 1, w).clearContent();
   if (rows.length) sh.getRange(2, 1, rows.length, w).setNumberFormat('@').setValues(rows.map(function (r) { return r.slice(0, w).concat(new Array(Math.max(0, w - r.length)).fill('')).map(cell_); }));
@@ -601,7 +678,9 @@ function clearFails_(key) { CacheService.getScriptCache().remove('f_' + key); }
 // ---------- الفترات ----------
 function shiftFromRow_(r, i) {
   const g = parseInt(S_(r[4]), 10);
-  return { row: i + 2, id: S_(r[0]), name: S_(r[1]), start: T_(r[2]), end: T_(r[3]), grace: isNaN(g) ? 0 : g, reqLoc: S_(r[5]) === 'نعم', manual: S_(r[6]) === 'نعم' };
+  const st = T_(r[2]), en = T_(r[3]);
+  // موعد المناوبة: بداية مناوبة الاستقبال، ونهاية مناوبة الانصراف (مع انصراف آخر طالب). الافتراضي = بداية ونهاية الدوام
+  return { row: i + 2, id: S_(r[0]), name: S_(r[1]), start: st, end: en, grace: isNaN(g) ? 0 : g, reqLoc: S_(r[5]) === 'نعم', manual: S_(r[6]) === 'نعم', ds: T_(r[7]), de: T_(r[8]), dStart: T_(r[7]) || st, dEnd: T_(r[8]) || en };
 }
 function allShifts_() { return rows_('shifts').map(shiftFromRow_).filter(function (x) { return x.id && x.start && x.end; }); }
 function findShift_(id) {
@@ -619,12 +698,19 @@ function shiftSave_(p) {
   if (isNaN(grace) || grace < 0) grace = 0;
   if (grace > 120) grace = 120;
   const reqLoc = p.reqLoc ? 'نعم' : 'لا', manual = p.manual ? 'نعم' : 'لا';
+  const ds = S_(p.dutyStart), de = S_(p.dutyEnd);
+  if ((ds && !isTime_(ds)) || (de && !isTime_(de))) fail_('وقت المناوبة غير صحيح');
+  if (ds && de && de <= ds) fail_('نهاية المناوبة يجب أن تكون بعد بدايتها');
+  if (de && de < start) fail_('نهاية مناوبة الانصراف يجب أن تكون بعد بداية الدوام');
+  // عناوين العمودين الجديدين في الجداول القديمة
+  const hd = sheet_('shifts').getRange(1, 8, 1, 2);
+  if (!S_(hd.getValues()[0][0])) hd.setValues([[SH.shifts.cols[7], SH.shifts.cols[8]]]).setFontWeight('bold');
   if (p.id) {
     const x = findShift_(S_(p.id));
     if (!x) fail_('الفترة غير موجودة');
-    setCells_('shifts', x.row, 2, [name, start, end, String(grace), reqLoc, manual]);
+    setCells_('shifts', x.row, 2, [name, start, end, String(grace), reqLoc, manual, ds, de]);
   } else {
-    appendRow_('shifts', [rid_('s'), name, start, end, String(grace), reqLoc, manual]);
+    appendRow_('shifts', [rid_('s'), name, start, end, String(grace), reqLoc, manual, ds, de]);
   }
 }
 function shiftSetFlagAll_(p) {
@@ -1009,6 +1095,71 @@ function dayEdit_(p, s) {
   });
   del.sort(function (x, y) { return y - x; }).forEach(function (row) { delRow_('attendance', row); });
 }
+// تعبئة كل الأيام غير الموقعة دفعة واحدة لفرد أو أكثر (بدل فتح كل يوم على حدة)
+// mode: official = مواعيد الفترة الرسمية، custom = وقت حضور وانصراف محدد
+// fillOut: إكمال الانصراف للأيام التي سُجّل فيها الحضور ولم يُسجّل الانصراف
+// skipExcused: تخطي أيام الغياب المعتمد
+function attBulk_(p, s) {
+  const from = S_(p.from), to = S_(p.to), today = todayStr_();
+  if (!isDate_(from) || !isDate_(to) || to < from) fail_('حدد فترة صحيحة (من تاريخ إلى تاريخ)');
+  const last = to > today ? today : to;
+  if (last < from) fail_('لا يمكن تعبئة أيام مستقبلية');
+  const days = dateRange_(from, last);
+  if (days.length > 93) fail_('أقصى مدة للتعبئة دفعة واحدة 3 أشهر');
+  const custom = p.mode === 'custom', cin = S_(p.in), cout = S_(p.out);
+  if (custom) {
+    if ((cin && !isTime_(cin)) || (cout && !isTime_(cout))) fail_('وقت غير صحيح');
+    if (!cin && !cout) fail_('أدخل وقت الحضور أو الانصراف');
+    if (cin && cout && cout <= cin) fail_('الانصراف يجب أن يكون بعد الحضور');
+  }
+  const wantSid = S_(p.sid), fillOut = !!p.fillOut, skipEx = p.skipExcused !== false;
+  const ids = (p.tids || []).map(S_).filter(Boolean);
+  if (!ids.length) fail_('اختر فرداً واحداً على الأقل');
+  const by = (s && s.name) || '', at = new Date().toISOString(), note = clip_(p.note, 200) || 'تعبئة جماعية من الإدارة';
+  const rs = rows_('attendance'), reqs = rows_('requests').map(reqFromRow_);
+  const holi = {}; holRows_().forEach(function (h) { holi[h[0]] = 1; });
+  const idx = {};
+  rs.forEach(function (r, i) { const k = S_(r[0]) + '|' + D_(r[2]); (idx[k] = idx[k] || []).push(i); });
+  const adds = [], upd = [];
+  let skipped = 0;
+  ids.forEach(function (tid) {
+    const t = findTeacher_(tid);
+    if (!t || !t.active) return;
+    days.forEach(function (d) {
+      const off = !isWorkday_(d) || !!holi[d];
+      const extra = extraShiftIdsFor_(tid, d);
+      if (off && !extra.length) return;
+      if (skipEx && reqs.some(function (r) { return r.tid === tid && r.status === 'approved' && r.type === 'absence' && r.from <= d && (r.to || r.from) >= d; })) { skipped++; return; }
+      const base = off ? [] : t.shiftIds;
+      let shs = shiftsOf_(base.concat(extra.filter(function (x) { return x && base.indexOf(x) < 0; })));
+      if (wantSid) shs = shs.filter(function (x) { return x.id === wantSid; });
+      const list = shs.length ? shs : (wantSid || !custom ? [] : [null]);
+      list.forEach(function (sh) {
+        const a = custom ? cin : (sh ? sh.start : ''), b = custom ? cout : (sh ? sh.end : '');
+        const sid = sh ? sh.id : '';
+        let i = -1;
+        (idx[tid + '|' + d] || []).forEach(function (j) { if (i < 0 && (sh ? attFind_([rs[j]], tid, d, sid, sh) === 0 : !S_(rs[j][15]))) i = j; });
+        if (i < 0) {
+          if (!a && !b) return;
+          adds.push([t.id, t.name, d, DAY_NAMES[dow_(d)], a, b, '', '', 'تعديل الإدارة', 'نعم', note].concat(shiftCells_(sh), [sid, by, at]));
+          return;
+        }
+        const inL = splitTimes_(rs[i][4]), outL = splitTimes_(rs[i][5]);
+        if (!inL.length && !outL.length && (a || b)) upd.push([i + 2, a, b]);
+        else if (fillOut && b && inL.length > outL.length && b > inL[inL.length - 1]) upd.push([i + 2, S_(rs[i][4]), outL.concat([b]).join(',')]);
+      });
+    });
+  });
+  if (adds.length + upd.length > 5000) fail_('عدد السجلات كبير جداً. قسّم الفترة إلى أجزاء أصغر.');
+  if (p.dry) return { added: adds.length, updated: upd.length, skipped: skipped };
+  upd.forEach(function (u) {
+    setCells_('attendance', u[0], 5, [u[1], u[2]]);
+    setCells_('attendance', u[0], 9, ['تعديل الإدارة', 'نعم', note]);
+    setCells_('attendance', u[0], 17, [by, at]);
+  });
+  appendRows_('attendance', adds);
+  return { added: adds.length, updated: upd.length, skipped: skipped };
+}
 function dayDel_(p) {
   const rs = rows_('attendance'), del = [];
   for (let i = 0; i < rs.length; i++) if (S_(rs[i][0]) === S_(p.tid) && D_(rs[i][2]) === S_(p.date)) del.push(i + 2);
@@ -1030,16 +1181,30 @@ function attDelete_(p) {
 }
 
 // ---------- الإجازات ----------
+// إضافة إجازة رسمية ليوم واحد أو لعدة أيام (من تاريخ إلى تاريخ)
 function holAdd_(p) {
-  const d = S_(p.date);
-  if (!isDate_(d)) fail_('تاريخ غير صحيح');
-  const rs = rows_('holidays');
-  for (let i = 0; i < rs.length; i++) if (D_(rs[i][0]) === d) { setCells_('holidays', i + 2, 2, [clip_(p.name, 80)]); return; }
-  appendRow_('holidays', [d, clip_(p.name, 80)]);
+  const from = S_(p.from || p.date), to = S_(p.to || p.from || p.date);
+  if (!isDate_(from) || !isDate_(to)) fail_('تاريخ غير صحيح');
+  if (to < from) fail_('تاريخ النهاية يجب أن يكون بعد تاريخ البداية أو مساوياً له');
+  const days = dateRange_(from, to);
+  if (days.length > 120) fail_('أقصى مدة للإجازة 120 يوماً في المرة الواحدة');
+  const name = clip_(p.name, 80);
+  const map = {};
+  holRows_().forEach(function (h) { map[h[0]] = h[1]; });
+  days.forEach(function (d) { map[d] = name; });
+  const all = Object.keys(map).sort().map(function (d) { return [d, map[d]]; });
+  rewriteRows_('holidays', all);
 }
 function holDel_(p) {
-  const rs = rows_('holidays');
-  for (let i = 0; i < rs.length; i++) if (D_(rs[i][0]) === S_(p.date)) { delRow_('holidays', i + 2); return; }
+  const from = S_(p.from || p.date), to = S_(p.to || p.from || p.date);
+  rewriteRows_('holidays', holRows_().filter(function (h) { return h[0] < from || h[0] > to; }));
+}
+function dateRange_(from, to) {
+  const out = [];
+  let d = new Date(from + 'T12:00:00Z');
+  const end = new Date(to + 'T12:00:00Z');
+  while (d <= end && out.length < 400) { out.push(Utilities.formatDate(d, 'UTC', 'yyyy-MM-dd')); d = new Date(d.getTime() + 86400000); }
+  return out;
 }
 
 // ---------- الطلبات ----------
@@ -1113,7 +1278,7 @@ function state_(s) {
   msgs.sort(function (a, b) { return b.at < a.at ? -1 : b.at > a.at ? 1 : 0; });
   st.messages = msgs.slice(0, 200).map(function (m) { return { id: m.id, tid: m.tid, text: m.text, from: m.from, at: m.at, read: m.read, readAt: m.readAt, by: m.by }; });
   holRows_().forEach(function (h) { st.holidays[h[0]] = h[1]; });
-  allShifts_().forEach(function (x) { st.shifts[x.id] = { name: x.name, start: x.start, end: x.end, grace: x.grace, reqLoc: x.reqLoc, manual: x.manual }; });
+  allShifts_().forEach(function (x) { st.shifts[x.id] = { name: x.name, start: x.start, end: x.end, grace: x.grace, reqLoc: x.reqLoc, manual: x.manual, ds: x.ds, de: x.de }; });
   const att = {};
   rows_('attendance').forEach(function (r) {
     const tid = S_(r[0]), d = D_(r[2]);
@@ -1134,12 +1299,17 @@ function state_(s) {
     st.teachers = {};
     allTeachers_().forEach(function (t) { st.teachers[t.id] = { name: t.name, role: t.role, active: t.active, order: t.order, activated: !!t.pin, kind: t.kind, shiftIds: t.shiftIds }; });
     st.requests = rows_('requests').map(reqFromRow_).filter(function (r) { return r.id; }).map(pubReq_);
-    st.sheetUrl = MEMO.ss ? MEMO.ss.getUrl() : ss_().getUrl();
+    st.sheetUrl = sheetUrl_();
     st.admin = { id: s.id, name: s.name, owner: !!s.owner, perms: s.perms || [] };
     st.permNames = PERMS;
     if (s.owner) st.users = allUsers_().map(function (u) { return { id: u.id, name: u.name, perms: u.perms, active: u.active, hasPin: !!u.pin, at: u.at, by: u.by }; });
   }
   return st;
+}
+function sheetUrl_() {
+  const c = rcCache_(); let u = c.get('ssurl');
+  if (!u) { u = (MEMO.ss || ss_()).getUrl(); c.put('ssurl', u, 21600); }
+  return u;
 }
 function holRows_() { return rows_('holidays').map(function (r) { return [D_(r[0]), S_(r[1])]; }).filter(function (h) { return h[0]; }); }
 function pubReq_(r) { return { id: r.id, tid: r.tid, type: r.type, from: r.from, to: r.to, tf: r.tf, tt: r.tt, reason: r.reason, at: r.at, status: r.status, note: r.note, decAt: r.decAt, decBy: r.decBy }; }
@@ -1451,7 +1621,7 @@ function pushDue_(date, hm, tids) {
       if (d.day === dow && offDay && extraIds.indexOf(d.sid) < 0) return;
       const sh = findShift_(d.sid);
       if (!sh) return;
-      const tm = d.type === 'end' ? sh.end : sh.start, at = minsOf_(tm);
+      const tm = d.type === 'end' ? sh.dEnd : sh.dStart, at = minsOf_(tm);
       if (nowM < at - dutyLead || nowM > at + 15) return;
       const txt = S_(getSetting_(d.type === 'end' ? 'dutyEndText' : 'dutyStartText')).replace(/\{الفترة\}/g, sh.name).replace(/\{الوقت\}/g, t12_(tm)) || 'لديك مناوبة اليوم';
       out.push({ tid: tid, key: 'pd_' + d.id + date, msg: { title: 'تذكير بالمناوبة', body: txt, tag: 'duty' + d.id, url: './', ttl: 3600 } });
