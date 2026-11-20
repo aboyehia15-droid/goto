@@ -1107,11 +1107,11 @@ function attBulk_(p, s) {
   const days = dateRange_(from, last);
   if (days.length > 93) fail_('أقصى مدة للتعبئة دفعة واحدة 3 أشهر');
   const custom = p.mode === 'custom', cin = S_(p.in), cout = S_(p.out);
-  if (custom) {
-    if ((cin && !isTime_(cin)) || (cout && !isTime_(cout))) fail_('وقت غير صحيح');
-    if (!cin && !cout) fail_('أدخل وقت الحضور أو الانصراف');
-    if (cin && cout && cout <= cin) fail_('الانصراف يجب أن يكون بعد الحضور');
-  }
+  const chkTimes = function (a, b) {
+    if ((a && !isTime_(a)) || (b && !isTime_(b))) fail_('وقت غير صحيح');
+    if (a && b && b <= a) fail_('الانصراف يجب أن يكون بعد الحضور');
+  };
+  if (custom) { chkTimes(cin, cout); if (!cin && !cout) fail_('أدخل وقت الحضور أو الانصراف'); }
   const wantSid = S_(p.sid), fillOut = !!p.fillOut, skipEx = p.skipExcused !== false;
   const ids = (p.tids || []).map(S_).filter(Boolean);
   if (!ids.length) fail_('اختر فرداً واحداً على الأقل');
@@ -1120,8 +1120,8 @@ function attBulk_(p, s) {
   const holi = {}; holRows_().forEach(function (h) { holi[h[0]] = 1; });
   const idx = {};
   rs.forEach(function (r, i) { const k = S_(r[0]) + '|' + D_(r[2]); (idx[k] = idx[k] || []).push(i); });
-  const adds = [], upd = [];
-  let skipped = 0;
+  // 1) حصر كل الأيام غير الموقعة (مع تمييز أيام الغياب المعتمد)
+  const cands = [];
   ids.forEach(function (tid) {
     const t = findTeacher_(tid);
     if (!t || !t.active) return;
@@ -1129,29 +1129,61 @@ function attBulk_(p, s) {
       const off = !isWorkday_(d) || !!holi[d];
       const extra = extraShiftIdsFor_(tid, d);
       if (off && !extra.length) return;
-      if (skipEx && reqs.some(function (r) { return r.tid === tid && r.status === 'approved' && r.type === 'absence' && r.from <= d && (r.to || r.from) >= d; })) { skipped++; return; }
+      const ex = reqs.some(function (r) { return r.tid === tid && r.status === 'approved' && r.type === 'absence' && r.from <= d && (r.to || r.from) >= d; });
       const base = off ? [] : t.shiftIds;
       let shs = shiftsOf_(base.concat(extra.filter(function (x) { return x && base.indexOf(x) < 0; })));
       if (wantSid) shs = shs.filter(function (x) { return x.id === wantSid; });
-      const list = shs.length ? shs : (wantSid || !custom ? [] : [null]);
+      const list = shs.length ? shs : (wantSid ? [] : [null]);
       list.forEach(function (sh) {
         const a = custom ? cin : (sh ? sh.start : ''), b = custom ? cout : (sh ? sh.end : '');
         const sid = sh ? sh.id : '';
         let i = -1;
         (idx[tid + '|' + d] || []).forEach(function (j) { if (i < 0 && (sh ? attFind_([rs[j]], tid, d, sid, sh) === 0 : !S_(rs[j][15]))) i = j; });
-        if (i < 0) {
-          if (!a && !b) return;
-          adds.push([t.id, t.name, d, DAY_NAMES[dow_(d)], a, b, '', '', 'تعديل الإدارة', 'نعم', note].concat(shiftCells_(sh), [sid, by, at]));
-          return;
-        }
+        const base0 = { k: tid + '|' + d + '|' + sid, tid: tid, name: t.name, date: d, sid: sid, sn: sh ? sh.name : '', ex: ex, sh: sh, t: t };
+        if (i < 0) { cands.push(Object.assign(base0, { kind: 'new', in: a, out: b, row: -1 })); return; }
         const inL = splitTimes_(rs[i][4]), outL = splitTimes_(rs[i][5]);
-        if (!inL.length && !outL.length && (a || b)) upd.push([i + 2, a, b]);
-        else if (fillOut && b && inL.length > outL.length && b > inL[inL.length - 1]) upd.push([i + 2, S_(rs[i][4]), outL.concat([b]).join(',')]);
+        if (!inL.length && !outL.length) cands.push(Object.assign(base0, { kind: 'new', in: a, out: b, row: i + 2 }));
+        else if (inL.length > outL.length) {
+          const lastIn = inL[inL.length - 1];
+          cands.push(Object.assign(base0, { kind: 'out', in: lastIn, out: b && b > lastIn ? b : '', row: i + 2, curIn: S_(rs[i][4]), curOut: S_(rs[i][5]), auto: fillOut }));
+        }
       });
     });
   });
+  // 2) ما يُعبّأ: الأيام المختارة من القائمة إن أُرسلت، وإلا كل الأيام حسب الخيارات
+  const pick = {};
+  const explicit = Array.isArray(p.items);
+  if (explicit) (p.items || []).slice(0, 5000).forEach(function (x) { pick[S_(x.tid) + '|' + S_(x.date) + '|' + S_(x.sid)] = x; });
+  const chosen = cands.filter(function (c) {
+    if (explicit) return !!pick[c.k];
+    if (c.ex && skipEx) return false;
+    return c.kind === 'new' ? !!(c.in || c.out) : (c.auto && !!c.out);
+  });
+  const skipped = explicit ? 0 : cands.filter(function (c) { return c.ex && skipEx; }).length;
+  if (p.dry) {
+    const lst = cands.slice(0, 3000).map(function (c) { return { tid: c.tid, name: c.name, date: c.date, sid: c.sid, sn: c.sn, kind: c.kind, in: c.in, out: c.out, ex: c.ex }; });
+    return { added: chosen.filter(function (c) { return c.kind === 'new'; }).length, updated: chosen.filter(function (c) { return c.kind === 'out'; }).length, skipped: skipped, items: lst, more: cands.length > 3000 };
+  }
+  const adds = [], upd = [];
+  chosen.forEach(function (c) {
+    let a = c.in, b = c.out;
+    if (explicit) {
+      const x = pick[c.k];
+      if (c.kind === 'new') { a = S_(x.in); b = S_(x.out); chkTimes(a, b); }
+      else { b = S_(x.out); if (b && !isTime_(b)) fail_('وقت غير صحيح'); }
+    }
+    if (c.kind === 'new') {
+      if (!a && !b) return;
+      if (c.row < 0) adds.push([c.t.id, c.t.name, c.date, DAY_NAMES[dow_(c.date)], a, b, '', '', 'تعديل الإدارة', 'نعم', note].concat(shiftCells_(c.sh), [c.sid, by, at]));
+      else upd.push([c.row, a, b]);
+    } else {
+      if (!b) return;
+      if (b <= c.in) fail_('وقت الانصراف ليوم ' + c.date + ' (' + c.name + ') يجب أن يكون بعد وقت الحضور ' + c.in);
+      const outL = splitTimes_(c.curOut);
+      upd.push([c.row, c.curIn, outL.concat([b]).join(',')]);
+    }
+  });
   if (adds.length + upd.length > 5000) fail_('عدد السجلات كبير جداً. قسّم الفترة إلى أجزاء أصغر.');
-  if (p.dry) return { added: adds.length, updated: upd.length, skipped: skipped };
   upd.forEach(function (u) {
     setCells_('attendance', u[0], 5, [u[1], u[2]]);
     setCells_('attendance', u[0], 9, ['تعديل الإدارة', 'نعم', note]);
